@@ -62,43 +62,45 @@ const upload = multer({
     }
 });
 
-// 🔹 4. SKILLS LIST
-const skillsList = [
-    "javascript",
-    "react",
-    "node.js",
-    "mongodb",
-    "express",
-    "html",
-    "css",
-    "python",
-    "java",
-    "sql"
+// 🔹 4. SKILL PATTERNS
+const skillDefinitions = [
+    { key: "javascript", regex: /\b(javascript|js)\b/i },
+    { key: "react", regex: /\b(react|reactjs|react\.js)\b/i },
+    { key: "node.js", regex: /\b(node|nodejs|node\.js)\b/i },
+    { key: "mongodb", regex: /\b(mongodb|mongo)\b/i },
+    { key: "express", regex: /\b(express|expressjs|express\.js)\b/i },
+    { key: "html", regex: /\b(html|html5)\b/i },
+    { key: "css", regex: /\b(css|css3)\b/i },
+    { key: "python", regex: /\b(python|python3)\b/i },
+    { key: "java", regex: /\bjava\b(?!script)/i },
+    { key: "sql", regex: /\b(sql|mysql|postgresql|postgres|sqlite|mssql)\b/i }
 ];
 
 // 🔹 5. EXTRACT SKILLS FUNCTION
 function extractSkills(text) {
-    const lowerText = text.toLowerCase();
+    const source = text || "";
 
-    return skillsList.filter(skill => 
-        lowerText.includes(skill)
-    );
+    return skillDefinitions
+        .filter((definition) => definition.regex.test(source))
+        .map((definition) => definition.key);
 }
 
 // 🔹 6. CALCULATE SCORE FUNCTION
 function calculateScore(resumeSkills, jdSkills) {
-    const matched = resumeSkills.filter(skill =>
-        jdSkills.includes(skill)
-    );
+    const matched = jdSkills.filter((skill) => resumeSkills.includes(skill));
+    const requiredCount = jdSkills.length;
+    const matchedCount = matched.length;
 
-    const score = jdSkills.length > 0 
-        ? (matched.length / jdSkills.length) * 100 
+    const score = requiredCount > 0
+        ? (matchedCount / requiredCount) * 100
         : 0;
 
     return {
         matchedSkills: matched,
         missingSkills: jdSkills.filter(skill => !matched.includes(skill)),
-        score: score.toFixed(2)
+        matchedCount,
+        requiredCount,
+        score: Number(score.toFixed(2))
     };
 }
 
@@ -131,6 +133,12 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
 
         const jdSkills = extractSkills(jobDescription.trim());
 
+        if (jdSkills.length === 0) {
+            return res.status(400).json({
+                error: "No recognized JD skills found. Include skills like JavaScript, React, Node.js, SQL, etc."
+            });
+        }
+
         let results = [];
         let failedFiles = [];
 
@@ -149,9 +157,11 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
 
                 results.push({
                     name: file.originalname,
-                    score: parseFloat(result.score),
+                    score: result.score,
                     matchedSkills: result.matchedSkills,
-                    missingSkills: result.missingSkills
+                    missingSkills: result.missingSkills,
+                    matchedCount: result.matchedCount,
+                    requiredCount: result.requiredCount
                 });
             } catch (parseError) {
                 failedFiles.push({

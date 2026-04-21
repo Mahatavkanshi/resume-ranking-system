@@ -252,10 +252,9 @@ function App() {
   return (
     <div className="app-shell">
       <main className="card">
-        <p className="badge">Backend: {API_BASE_URL}</p>
-        <h1>Resume Ranking System</h1>
+        <h1>Talent Match Studio</h1>
         <p className="subtitle">
-          Upload multiple resumes, provide a job description, and get candidates ranked by skill match.
+          Upload resumes, paste a job description, and get an explainable ranking in seconds.
         </p>
 
         <form onSubmit={handleSubmit} className="form-grid">
@@ -362,6 +361,10 @@ function App() {
                 <p>JD Skills</p>
                 <strong>{meta?.jdSkills?.length || 0}</strong>
               </article>
+              <article className="summary-card">
+                <p>Recognized Skills</p>
+                <strong>{meta?.jdSkills?.join(', ') || 'None'}</strong>
+              </article>
             </div>
 
             {filteredRanking.length === 0 ? (
@@ -386,6 +389,7 @@ function App() {
                       <td>
                         <div className="score-wrap">
                           <span>{candidate.score}%</span>
+                          <small>{candidate.matchedCount}/{candidate.requiredCount} skills matched</small>
                           <div className="score-track" aria-hidden="true">
                             <div className="score-fill" style={{ width: `${candidate.score}%` }} />
                           </div>
@@ -427,6 +431,9 @@ function App() {
           <div className="modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
             <h3>{selectedCandidate.name}</h3>
             <p className="modal-score">Score: {selectedCandidate.score}%</p>
+            <p className="modal-score-detail">
+              Match: {selectedCandidate.matchedCount}/{selectedCandidate.requiredCount} required skills
+            </p>
 
             <div className="modal-section">
               <h4>Matched Skills</h4>

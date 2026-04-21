@@ -1,14 +1,14 @@
 :root {
-  --bg: #f6f8fc;
-  --ink: #14213d;
-  --muted: #5b647a;
+  --bg: #f4f6fb;
+  --ink: #1f2a44;
+  --muted: #5f6880;
   --surface: #ffffff;
-  --accent: #0f766e;
-  --accent-strong: #0b5e57;
-  --accent-soft: #ddf6ef;
+  --accent: #0b6e99;
+  --accent-strong: #05567a;
+  --accent-soft: #d8edf7;
   --danger-bg: #ffe9e9;
   --danger-ink: #8a1c1c;
-  --line: #d6dbe7;
+  --line: #d7dcea;
 }
 
 * {
@@ -17,8 +17,11 @@
 
 body {
   margin: 0;
-  font-family: "Trebuchet MS", "Lucida Sans Unicode", "Lucida Grande", sans-serif;
-  background: linear-gradient(145deg, #e8eefc 0%, #f7fafc 55%, #edf7f4 100%);
+  font-family: "Segoe UI", "Trebuchet MS", "Lucida Sans Unicode", sans-serif;
+  background:
+    radial-gradient(circle at 8% 12%, #dce9ff 0%, rgba(220, 233, 255, 0) 33%),
+    radial-gradient(circle at 92% 84%, #d9f2ff 0%, rgba(217, 242, 255, 0) 35%),
+    linear-gradient(155deg, #edf2ff 0%, #f8fbff 48%, #eef9ff 100%);
   color: var(--ink);
 }
 
@@ -31,29 +34,19 @@ body {
 }
 
 .card {
-  width: min(900px, 100%);
+  width: min(980px, 100%);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 14px 40px rgba(20, 33, 61, 0.09);
+  border-radius: 20px;
+  padding: 26px;
+  box-shadow: 0 20px 48px rgba(22, 42, 75, 0.12);
   animation: card-enter 300ms ease-out;
-}
-
-.badge {
-  display: inline-block;
-  margin: 0 0 10px;
-  background: #edf2ff;
-  color: #2b3a67;
-  border: 1px solid #d9e3ff;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 0.8rem;
 }
 
 h1 {
   margin: 0 0 8px;
-  font-size: clamp(1.4rem, 2.8vw, 2rem);
+  font-size: clamp(1.45rem, 2.8vw, 2.1rem);
+  letter-spacing: 0.2px;
 }
 
 .subtitle {
@@ -72,10 +65,10 @@ h1 {
 }
 
 .drop-zone {
-  border: 2px dashed #b6c2de;
-  background: #f7f9ff;
+  border: 2px dashed #b7c8e8;
+  background: linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
   border-radius: 12px;
-  padding: 18px;
+  padding: 20px;
   text-align: center;
   transition: border-color 160ms ease, background-color 160ms ease;
 }
@@ -119,7 +112,7 @@ button {
   border: 0;
   background: var(--accent);
   color: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 16px;
   font-weight: 600;
   cursor: pointer;
@@ -170,9 +163,9 @@ button:hover:not(:disabled) {
 }
 
 .ghost-button {
-  background: #fff;
-  color: #28406f;
-  border: 1px solid #b7c4df;
+  background: #fdfefe;
+  color: #1f4c6a;
+  border: 1px solid #bbcade;
 }
 
 .ghost-button:hover:not(:disabled) {
@@ -203,14 +196,14 @@ button:hover:not(:disabled) {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
 
 .summary-card {
   margin: 0;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--line);
   background: #fcfdff;
   border-radius: 10px;
@@ -225,7 +218,8 @@ button:hover:not(:disabled) {
 .summary-card strong {
   display: block;
   margin-top: 4px;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
+  line-height: 1.35;
 }
 
 .table-wrap {
@@ -269,6 +263,10 @@ tr:last-child td {
   display: grid;
   gap: 6px;
   min-width: 120px;
+}
+
+.score-wrap small {
+  color: #5b6a85;
 }
 
 .score-track {
@@ -326,9 +324,14 @@ tr:last-child td {
 }
 
 .modal-score {
-  margin: 8px 0 14px;
+  margin: 8px 0 6px;
   color: #2d456f;
   font-weight: 700;
+}
+
+.modal-score-detail {
+  margin: 0 0 14px;
+  color: #50607d;
 }
 
 .modal-section {
