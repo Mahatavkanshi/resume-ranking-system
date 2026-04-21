@@ -69,42 +69,43 @@ app.get("/", (req, res) => {
 });
 
 // 🔥 UPDATED MAIN ROUTE
-app.post("/upload", upload.single("resume"), async (req, res) => {
+app.post("/upload-multiple", upload.array("resumes", 10), async (req, res) => {
     try {
-        // 🔹 Get file path
-        const filePath = req.file.path;
-
-        // 🔹 Read file
-        const dataBuffer = fs.readFileSync(filePath);
-
-        // 🔹 Extract text
-        const data = await pdfParse(dataBuffer);
-        const resumeText = data.text;
-
-        // 🔹 Get Job Description
+        const files = req.files;
         const jobDescription = req.body.jd || "";
 
-        // 🔹 Extract skills
-        const resumeSkills = extractSkills(resumeText);
         const jdSkills = extractSkills(jobDescription);
 
-        // 🔹 Calculate score
-        const result = calculateScore(resumeSkills, jdSkills);
+        let results = [];
 
-        // 🔹 Send response
+        for (let file of files) {
+            const dataBuffer = fs.readFileSync(file.path);
+            const data = await pdfParse(dataBuffer);
+
+            const resumeText = data.text;
+
+            const resumeSkills = extractSkills(resumeText);
+            const result = calculateScore(resumeSkills, jdSkills);
+
+            results.push({
+                name: file.originalname,
+                score: parseFloat(result.score),
+                matchedSkills: result.matchedSkills
+            });
+        }
+
+        // 🔥 SORT (IMPORTANT)
+        results.sort((a, b) => b.score - a.score);
+
         res.json({
-            message: "Processing completed ✅",
-            score: result.score,
-            matchedSkills: result.matchedSkills,
-            missingSkills: result.missingSkills,
-            resumeSkills,
-            jdSkills
+            message: "Ranking completed ✅",
+            ranking: results
         });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({
-            error: "Error processing resume"
+            error: "Error processing resumes"
         });
     }
 });
