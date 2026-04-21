@@ -1,38 +1,173 @@
-.App {
-  text-align: center;
+:root {
+  --bg: #f6f8fc;
+  --ink: #14213d;
+  --muted: #5b647a;
+  --surface: #ffffff;
+  --accent: #0f766e;
+  --accent-strong: #0b5e57;
+  --danger-bg: #ffe9e9;
+  --danger-ink: #8a1c1c;
+  --line: #d6dbe7;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(145deg, #e8eefc 0%, #f7fafc 55%, #edf7f4 100%);
+  color: var(--ink);
 }
 
-.App-header {
-  background-color: #282c34;
+.app-shell {
   min-height: 100vh;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 24px;
 }
 
-.App-link {
-  color: #61dafb;
+.card {
+  width: min(900px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 14px 40px rgba(20, 33, 61, 0.09);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  color: var(--muted);
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.label-text {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+input[type="file"],
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  font: inherit;
+  background: #fff;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  justify-self: start;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.file-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.error-box {
+  margin-top: 16px;
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.results {
+  margin-top: 24px;
+}
+
+.results h2 {
+  margin-bottom: 12px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 680px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+th {
+  background: #f1f5fb;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+.failed-files {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #fff7e6;
+  border-radius: 10px;
+  border: 1px solid #f3d19f;
+}
+
+.failed-files h3 {
+  margin: 0 0 8px;
+}
+
+.failed-files ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 12px;
   }
-  to {
-    transform: rotate(360deg);
+
+  .card {
+    padding: 16px;
+  }
+
+  button {
+    width: 100%;
   }
 }
