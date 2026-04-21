@@ -166,8 +166,8 @@ function App() {
     }
 
     const headers = ['Rank', 'Candidate', 'Score', 'Matched Skills', 'Missing Skills'];
-    const rows = ranking.map((candidate, index) => [
-      index + 1,
+    const rows = ranking.map((candidate) => [
+      candidate.rank,
       candidate.name,
       candidate.score,
       (candidate.matchedSkills || []).join(' | '),
@@ -236,7 +236,10 @@ function App() {
         return;
       }
 
-      setRanking(data.ranking || []);
+      setRanking((data.ranking || []).map((item, index) => ({
+        ...item,
+        rank: index + 1
+      })));
       setFailedFiles(data.failedFiles || []);
       setMeta(data.meta || null);
     } catch (requestError) {
@@ -376,9 +379,9 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRanking.map((candidate, index) => (
+                  {filteredRanking.map((candidate) => (
                     <tr key={candidate.name}>
-                      <td>{index + 1}</td>
+                      <td>{candidate.rank}</td>
                       <td>{candidate.name}</td>
                       <td>
                         <div className="score-wrap">
