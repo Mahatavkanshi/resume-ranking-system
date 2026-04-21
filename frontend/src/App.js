@@ -1,5 +1,5 @@
 import './App.css';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 const MAX_FILES = 10;
@@ -9,9 +9,13 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [ranking, setRanking] = useState([]);
   const [failedFiles, setFailedFiles] = useState([]);
+  const [meta, setMeta] = useState(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [minScore, setMinScore] = useState(0);
+  const [selectedCandidate, setSelectedCandidate] = useState(null);
 
   const hasResults = ranking.length > 0 || failedFiles.length > 0;
 
@@ -30,6 +34,43 @@ function App() {
     };
   }, [ranking]);
 
+  const filteredRanking = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+
+    return ranking.filter((candidate) => {
+      const score = Number(candidate.score) || 0;
+      const inScoreRange = score >= minScore;
+      if (!inScoreRange) {
+        return false;
+      }
+
+      if (!term) {
+        return true;
+      }
+
+      const haystack = [
+        candidate.name,
+        ...(candidate.matchedSkills || []),
+        ...(candidate.missingSkills || [])
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(term);
+    });
+  }, [ranking, searchTerm, minScore]);
+
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setSelectedCandidate(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, []);
+
   const isPdf = (file) => {
     if (!file) {
       return false;
@@ -46,6 +87,8 @@ function App() {
 
     if (invalidCount > 0) {
       setError(`Ignored ${invalidCount} non-PDF file(s). Only PDF resumes are allowed.`);
+    } else {
+      setError('');
     }
 
     if (validFiles.length === 0) {
@@ -110,7 +153,39 @@ function App() {
     setJobDescription('');
     setRanking([]);
     setFailedFiles([]);
+    setMeta(null);
     setError('');
+    setSearchTerm('');
+    setMinScore(0);
+    setSelectedCandidate(null);
+  };
+
+  const exportCsv = () => {
+    if (ranking.length === 0) {
+      return;
+    }
+
+    const headers = ['Rank', 'Candidate', 'Score', 'Matched Skills', 'Missing Skills'];
+    const rows = ranking.map((candidate, index) => [
+      index + 1,
+      candidate.name,
+      candidate.score,
+      (candidate.matchedSkills || []).join(' | '),
+      (candidate.missingSkills || []).join(' | ')
+    ]);
+
+    const toCsvValue = (value) => `"${String(value).replace(/"/g, '""')}"`;
+    const csv = [headers, ...rows]
+      .map((row) => row.map(toCsvValue).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = 'ranked-candidates.csv';
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleSubmit = async (event) => {
@@ -118,6 +193,8 @@ function App() {
     setError('');
     setRanking([]);
     setFailedFiles([]);
+    setMeta(null);
+    setSelectedCandidate(null);
 
     if (selectedFiles.length === 0) {
       setError('Please select at least one resume PDF.');
@@ -161,6 +238,7 @@ function App() {
 
       setRanking(data.ranking || []);
       setFailedFiles(data.failedFiles || []);
+      setMeta(data.meta || null);
     } catch (requestError) {
       setError(`Unable to connect to backend at ${API_BASE_URL}.`);
     } finally {
@@ -230,6 +308,9 @@ function App() {
             <button type="button" className="ghost-button" onClick={clearForm} disabled={isLoading}>
               Clear
             </button>
+            <button type="button" className="ghost-button" onClick={exportCsv} disabled={ranking.length === 0 || isLoading}>
+              Export CSV
+            </button>
           </div>
         </form>
 
@@ -238,6 +319,29 @@ function App() {
         {hasResults && (
           <section className="results">
             <h2>Ranked Candidates</h2>
+
+            <div className="filters-grid">
+              <label className="label-text" htmlFor="search">Search Candidate / Skills</label>
+              <input
+                id="search"
+                type="text"
+                placeholder="e.g. react, sql, sejal"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+
+              <label className="label-text" htmlFor="minScore">Minimum Score: {minScore}%</label>
+              <input
+                id="minScore"
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={minScore}
+                onChange={(event) => setMinScore(Number(event.target.value))}
+              />
+            </div>
+
             <div className="summary-grid">
               <article className="summary-card">
                 <p>Total Candidates</p>
@@ -251,7 +355,15 @@ function App() {
                 <p>Average Score</p>
                 <strong>{scoreSummary.avgScore}%</strong>
               </article>
+              <article className="summary-card">
+                <p>JD Skills</p>
+                <strong>{meta?.jdSkills?.length || 0}</strong>
+              </article>
             </div>
+
+            {filteredRanking.length === 0 ? (
+              <p className="empty-results">No candidates match the current filters.</p>
+            ) : (
             <div className="table-wrap">
               <table>
                 <thead>
@@ -260,10 +372,11 @@ function App() {
                     <th>Candidate</th>
                     <th>Score</th>
                     <th>Matched Skills</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ranking.map((candidate, index) => (
+                  {filteredRanking.map((candidate, index) => (
                     <tr key={candidate.name}>
                       <td>{index + 1}</td>
                       <td>{candidate.name}</td>
@@ -276,11 +389,21 @@ function App() {
                         </div>
                       </td>
                       <td>{(candidate.matchedSkills || []).join(', ') || 'None'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => setSelectedCandidate(candidate)}
+                        >
+                          View Details
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            )}
 
             {failedFiles.length > 0 && (
               <div className="failed-files">
@@ -295,6 +418,29 @@ function App() {
           </section>
         )}
       </main>
+
+      {selectedCandidate && (
+        <div className="modal-overlay" onClick={() => setSelectedCandidate(null)} role="presentation">
+          <div className="modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <h3>{selectedCandidate.name}</h3>
+            <p className="modal-score">Score: {selectedCandidate.score}%</p>
+
+            <div className="modal-section">
+              <h4>Matched Skills</h4>
+              <p>{(selectedCandidate.matchedSkills || []).join(', ') || 'None'}</p>
+            </div>
+
+            <div className="modal-section">
+              <h4>Missing Skills</h4>
+              <p>{(selectedCandidate.missingSkills || []).join(', ') || 'None'}</p>
+            </div>
+
+            <button type="button" onClick={() => setSelectedCandidate(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

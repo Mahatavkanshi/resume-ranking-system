@@ -96,6 +96,7 @@ h1 {
 }
 
 input[type="file"],
+input[type="text"],
 textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -107,6 +108,10 @@ textarea {
 
 textarea {
   resize: vertical;
+}
+
+input[type="range"] {
+  width: 100%;
 }
 
 button {
@@ -190,9 +195,15 @@ button:hover:not(:disabled) {
   margin-bottom: 12px;
 }
 
+.filters-grid {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -221,6 +232,15 @@ button:hover:not(:disabled) {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
+}
+
+.empty-results {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px dashed #b8c4de;
+  border-radius: 10px;
+  background: #f9fbff;
+  color: #324468;
 }
 
 table {
@@ -282,6 +302,48 @@ tr:last-child td {
   padding-left: 18px;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 23, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 18px;
+  box-shadow: 0 20px 45px rgba(15, 32, 61, 0.22);
+}
+
+.modal-card h3 {
+  margin: 0;
+}
+
+.modal-score {
+  margin: 8px 0 14px;
+  color: #2d456f;
+  font-weight: 700;
+}
+
+.modal-section {
+  margin-bottom: 12px;
+}
+
+.modal-section h4 {
+  margin: 0 0 4px;
+}
+
+.modal-section p {
+  margin: 0;
+  color: #3f4f71;
+}
+
 @media (max-width: 640px) {
   .app-shell {
     padding: 12px;
@@ -301,7 +363,11 @@ tr:last-child td {
   }
 
   .summary-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-card {
+    padding: 14px;
   }
 }
 
