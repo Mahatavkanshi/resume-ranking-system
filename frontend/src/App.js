@@ -1,6 +1,8 @@
 import './App.css';
 import { useMemo, useState } from 'react';
 
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
 function App() {
   const [jobDescription, setJobDescription] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -47,7 +49,7 @@ function App() {
     try {
       setIsLoading(true);
 
-      const response = await fetch('http://localhost:5000/upload-multiple', {
+      const response = await fetch(`${API_BASE_URL}/upload-multiple`, {
         method: 'POST',
         body: formData
       });
@@ -65,7 +67,7 @@ function App() {
       setRanking(data.ranking || []);
       setFailedFiles(data.failedFiles || []);
     } catch (requestError) {
-      setError('Unable to connect to backend. Make sure server is running on port 5000.');
+      setError(`Unable to connect to backend at ${API_BASE_URL}.`);
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +135,14 @@ function App() {
                     <tr key={candidate.name}>
                       <td>{index + 1}</td>
                       <td>{candidate.name}</td>
-                      <td>{candidate.score}%</td>
+                      <td>
+                        <div className="score-wrap">
+                          <span>{candidate.score}%</span>
+                          <div className="score-track" aria-hidden="true">
+                            <div className="score-fill" style={{ width: `${candidate.score}%` }} />
+                          </div>
+                        </div>
+                      </td>
                       <td>{(candidate.matchedSkills || []).join(', ') || 'None'}</td>
                     </tr>
                   ))}
