@@ -20,8 +20,8 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [minScore, setMinScore] = useState(0);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
+  const [authEmail, setAuthEmail] = useState('mahatavkanshisaini@gmail.com');
+  const [authPassword, setAuthPassword] = useState('sajalsaini');
   const [authUser, setAuthUser] = useState(null);
   const [accessToken, setAccessToken] = useState('');
   const [authError, setAuthError] = useState('');
