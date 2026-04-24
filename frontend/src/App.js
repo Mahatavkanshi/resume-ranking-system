@@ -1,5 +1,6 @@
 import './App.css';
 import { useEffect, useMemo, useState } from 'react';
+import { isSupabaseAuthConfigured, supabase } from './supabaseClient';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 const MAX_FILES = 10;
@@ -7,15 +8,23 @@ const MAX_FILES = 10;
 function App() {
   const [jobDescription, setJobDescription] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [mustHaveSkillsInput, setMustHaveSkillsInput] = useState('');
+  const [niceToHaveSkillsInput, setNiceToHaveSkillsInput] = useState('');
   const [ranking, setRanking] = useState([]);
   const [failedFiles, setFailedFiles] = useState([]);
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [minScore, setMinScore] = useState(0);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authUser, setAuthUser] = useState(null);
+  const [accessToken, setAccessToken] = useState('');
+  const [authError, setAuthError] = useState('');
 
   const hasResults = ranking.length > 0 || failedFiles.length > 0;
 
@@ -69,6 +78,44 @@ function App() {
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseAuthConfigured || !supabase) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadSession = async () => {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (sessionError) {
+        setAuthError(sessionError.message || 'Unable to restore session.');
+        return;
+      }
+
+      const session = data?.session || null;
+      setAuthUser(session?.user || null);
+      setAccessToken(session?.access_token || '');
+    };
+
+    loadSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUser(session?.user || null);
+      setAccessToken(session?.access_token || '');
+      setAuthError('');
+    });
+
+    return () => {
+      isMounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
   }, []);
 
   const isPdf = (file) => {
@@ -151,6 +198,8 @@ function App() {
   const clearForm = () => {
     setSelectedFiles([]);
     setJobDescription('');
+    setMustHaveSkillsInput('');
+    setNiceToHaveSkillsInput('');
     setRanking([]);
     setFailedFiles([]);
     setMeta(null);
@@ -188,6 +237,52 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  const signIn = async () => {
+    setAuthError('');
+
+    if (!isSupabaseAuthConfigured || !supabase) {
+      setAuthError('Supabase auth is not configured in frontend env.');
+      return;
+    }
+
+    if (!authEmail.trim() || !authPassword.trim()) {
+      setAuthError('Enter email and password to sign in.');
+      return;
+    }
+
+    try {
+      setIsAuthLoading(true);
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword
+      });
+
+      if (signInError) {
+        setAuthError(signInError.message || 'Sign-in failed.');
+        return;
+      }
+
+      setAuthUser(data?.user || null);
+      setAccessToken(data?.session?.access_token || '');
+      setAuthPassword('');
+    } catch (signInCatchError) {
+      setAuthError('Unable to sign in right now.');
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const signOut = async () => {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setAuthUser(null);
+    setAccessToken('');
+    setAuthPassword('');
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
@@ -206,6 +301,11 @@ function App() {
       return;
     }
 
+    if (!accessToken) {
+      setError('Please sign in with recruiter/admin account before uploading resumes.');
+      return;
+    }
+
     if (selectedFiles.length > MAX_FILES) {
       setError(`Please upload a maximum of ${MAX_FILES} resumes.`);
       return;
@@ -213,6 +313,8 @@ function App() {
 
     const formData = new FormData();
     formData.append('jd', jobDescription);
+    formData.append('mustHaveSkills', mustHaveSkillsInput);
+    formData.append('niceToHaveSkills', niceToHaveSkillsInput);
 
     selectedFiles.forEach((file) => {
       formData.append('resumes', file);
@@ -223,6 +325,9 @@ function App() {
 
       const response = await fetch(`${API_BASE_URL}/upload-multiple`, {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        },
         body: formData
       });
 
@@ -256,6 +361,45 @@ function App() {
         <p className="subtitle">
           Upload resumes, paste a job description, and get an explainable ranking in seconds.
         </p>
+
+        {isSupabaseAuthConfigured ? (
+          <section className="summary-card" aria-live="polite">
+            <p><strong>Auth</strong> {authUser ? 'Connected' : 'Sign in required'}</p>
+            {authUser ? (
+              <>
+                <p>{authUser.email}</p>
+                <button type="button" className="ghost-button" onClick={signOut} disabled={isAuthLoading}>
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <>
+                <label htmlFor="authEmail" className="label-text">Recruiter Email</label>
+                <input
+                  id="authEmail"
+                  type="email"
+                  placeholder="recruiter@company.com"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                />
+                <label htmlFor="authPassword" className="label-text">Password</label>
+                <input
+                  id="authPassword"
+                  type="password"
+                  placeholder="Enter password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                />
+                <button type="button" onClick={signIn} disabled={isAuthLoading}>
+                  {isAuthLoading ? 'Signing in...' : 'Sign In'}
+                </button>
+              </>
+            )}
+            {authError && <p className="error-box">{authError}</p>}
+          </section>
+        ) : (
+          <p className="error-box">Supabase auth is not configured in frontend env.</p>
+        )}
 
         <form onSubmit={handleSubmit} className="form-grid">
           <label htmlFor="resumes" className="label-text">Upload Resumes (PDF, max {MAX_FILES})</label>
@@ -301,6 +445,26 @@ function App() {
             placeholder="Paste job description or required skills here..."
             value={jobDescription}
             onChange={(event) => setJobDescription(event.target.value)}
+          />
+
+          <label htmlFor="mustHaveSkills" className="label-text">Must-Have Skills (comma/new-line)</label>
+          <textarea
+            id="mustHaveSkills"
+            name="mustHaveSkills"
+            rows="3"
+            placeholder="react, node.js, sql"
+            value={mustHaveSkillsInput}
+            onChange={(event) => setMustHaveSkillsInput(event.target.value)}
+          />
+
+          <label htmlFor="niceToHaveSkills" className="label-text">Nice-To-Have Skills (comma/new-line)</label>
+          <textarea
+            id="niceToHaveSkills"
+            name="niceToHaveSkills"
+            rows="3"
+            placeholder="mongodb, python"
+            value={niceToHaveSkillsInput}
+            onChange={(event) => setNiceToHaveSkillsInput(event.target.value)}
           />
 
           <div className="actions-row">
@@ -360,6 +524,14 @@ function App() {
               <article className="summary-card">
                 <p>JD Skills</p>
                 <strong>{meta?.jdSkills?.length || 0}</strong>
+              </article>
+              <article className="summary-card">
+                <p>Must-Have Skills</p>
+                <strong>{meta?.criteria?.mustHaveSkills?.length || 0}</strong>
+              </article>
+              <article className="summary-card">
+                <p>Nice-To-Have Skills</p>
+                <strong>{meta?.criteria?.niceToHaveSkills?.length || 0}</strong>
               </article>
               <article className="summary-card">
                 <p>Recognized Skills</p>
