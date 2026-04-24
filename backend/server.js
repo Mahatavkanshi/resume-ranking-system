@@ -15,6 +15,11 @@ const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN || "http://localhost:3000"
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+const AUTH_REQUIRED = process.env.AUTH_REQUIRED !== "false";
+const ALLOWED_ROLES = (process.env.ALLOWED_ROLES || "recruiter,admin")
+    .split(",")
+    .map((role) => role.trim().toLowerCase())
+    .filter(Boolean);
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
@@ -88,21 +93,108 @@ function extractSkills(text) {
         .map((definition) => definition.key);
 }
 
-// 🔹 6. CALCULATE SCORE FUNCTION
-function calculateScore(resumeSkills, jdSkills) {
-    const matched = jdSkills.filter((skill) => resumeSkills.includes(skill));
-    const requiredCount = jdSkills.length;
-    const matchedCount = matched.length;
+function resolveRequestedSkills(input) {
+    if (!input || typeof input !== "string") {
+        return [];
+    }
 
-    const score = requiredCount > 0
-        ? (matchedCount / requiredCount) * 100
+    const normalized = input
+        .split(/\n|,|\|/g)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .join(" ");
+
+    return extractSkills(normalized);
+}
+
+function uniqueSkills(skills) {
+    return Array.from(new Set(skills));
+}
+
+async function authenticateUser(req, res, next) {
+    if (!AUTH_REQUIRED) {
+        req.user = null;
+        return next();
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+        return res.status(500).json({
+            error: "Auth is enabled but Supabase is not configured"
+        });
+    }
+
+    const authorization = req.headers.authorization || "";
+    const token = authorization.startsWith("Bearer ")
+        ? authorization.slice(7).trim()
+        : "";
+
+    if (!token) {
+        return res.status(401).json({
+            error: "Missing Bearer token"
+        });
+    }
+
+    const { data, error } = await supabase.auth.getUser(token);
+
+    if (error || !data?.user) {
+        return res.status(401).json({
+            error: "Invalid or expired token"
+        });
+    }
+
+    const role = String(
+        data.user.app_metadata?.role ||
+        data.user.user_metadata?.role ||
+        "candidate"
+    ).toLowerCase();
+
+    if (!ALLOWED_ROLES.includes(role)) {
+        return res.status(403).json({
+            error: `Role '${role}' is not allowed`
+        });
+    }
+
+    req.user = {
+        id: data.user.id,
+        email: data.user.email,
+        role
+    };
+
+    return next();
+}
+
+// 🔹 6. CALCULATE SCORE FUNCTION
+function calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills) {
+    const mustHaveMatched = mustHaveSkills.filter((skill) => resumeSkills.includes(skill));
+    const niceToHaveMatched = niceToHaveSkills.filter((skill) => resumeSkills.includes(skill));
+    const matched = uniqueSkills([...mustHaveMatched, ...niceToHaveMatched]);
+    const missing = uniqueSkills([
+        ...mustHaveSkills.filter((skill) => !mustHaveMatched.includes(skill)),
+        ...niceToHaveSkills.filter((skill) => !niceToHaveMatched.includes(skill))
+    ]);
+
+    const mustHaveWeight = 2;
+    const niceToHaveWeight = 1;
+    const weightedMatched = (mustHaveMatched.length * mustHaveWeight) + (niceToHaveMatched.length * niceToHaveWeight);
+    const weightedRequired = (mustHaveSkills.length * mustHaveWeight) + (niceToHaveSkills.length * niceToHaveWeight);
+
+    const score = weightedRequired > 0
+        ? (weightedMatched / weightedRequired) * 100
         : 0;
 
     return {
         matchedSkills: matched,
-        missingSkills: jdSkills.filter(skill => !matched.includes(skill)),
-        matchedCount,
-        requiredCount,
+        missingSkills: missing,
+        matchedCount: matched.length,
+        requiredCount: mustHaveSkills.length + niceToHaveSkills.length,
+        mustHaveMatchedCount: mustHaveMatched.length,
+        mustHaveRequiredCount: mustHaveSkills.length,
+        niceToHaveMatchedCount: niceToHaveMatched.length,
+        niceToHaveRequiredCount: niceToHaveSkills.length,
+        weights: {
+            mustHave: mustHaveWeight,
+            niceToHave: niceToHaveWeight
+        },
         score: Number(score.toFixed(2))
     };
 }
@@ -122,11 +214,21 @@ app.get("/health", (req, res) => {
     });
 });
 
+app.get("/auth/me", authenticateUser, (req, res) => {
+    res.json({
+        authRequired: AUTH_REQUIRED,
+        allowedRoles: ALLOWED_ROLES,
+        user: req.user
+    });
+});
+
 // 🔥 UPDATED MAIN ROUTE
-app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res) => {
+app.post("/upload-multiple", authenticateUser, upload.array("resumes", MAX_FILES), async (req, res) => {
     try {
         const files = req.files;
         const jobDescription = req.body.jd || "";
+        const mustHaveInput = req.body.mustHaveSkills || "";
+        const niceToHaveInput = req.body.niceToHaveSkills || "";
 
         if (!files || files.length === 0) {
             return res.status(400).json({
@@ -134,7 +236,19 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
             });
         }
 
-        const jdSkills = extractSkills(jobDescription.trim());
+        const extractedFromJd = extractSkills(jobDescription.trim());
+        const requestedMustHave = resolveRequestedSkills(mustHaveInput);
+        const requestedNiceToHave = resolveRequestedSkills(niceToHaveInput);
+
+        const mustHaveSkills = uniqueSkills(
+            requestedMustHave.length > 0 ? requestedMustHave : extractedFromJd
+        );
+
+        const niceToHaveSkills = uniqueSkills(
+            requestedNiceToHave.filter((skill) => !mustHaveSkills.includes(skill))
+        );
+
+        const jdSkills = uniqueSkills([...mustHaveSkills, ...niceToHaveSkills]);
 
         if (jdSkills.length === 0) {
             return res.status(400).json({
@@ -156,7 +270,7 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
                 const resumeText = data.text;
 
                 const resumeSkills = extractSkills(resumeText);
-                const result = calculateScore(resumeSkills, jdSkills);
+                const result = calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills);
 
                 results.push({
                     name: file.originalname,
@@ -164,7 +278,11 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
                     matchedSkills: result.matchedSkills,
                     missingSkills: result.missingSkills,
                     matchedCount: result.matchedCount,
-                    requiredCount: result.requiredCount
+                    requiredCount: result.requiredCount,
+                    mustHaveMatchedCount: result.mustHaveMatchedCount,
+                    mustHaveRequiredCount: result.mustHaveRequiredCount,
+                    niceToHaveMatchedCount: result.niceToHaveMatchedCount,
+                    niceToHaveRequiredCount: result.niceToHaveRequiredCount
                 });
             } catch (parseError) {
                 failedFiles.push({
@@ -225,7 +343,16 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
             meta: {
                 filesProcessed: results.length,
                 filesFailed: failedFiles.length,
-                jdSkills
+                jdSkills,
+                criteria: {
+                    mustHaveSkills,
+                    niceToHaveSkills,
+                    weights: {
+                        mustHave: 2,
+                        niceToHave: 1
+                    }
+                },
+                actor: req.user
             }
         });
 
