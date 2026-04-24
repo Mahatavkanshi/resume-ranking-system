@@ -1,274 +1,316 @@
 import './App.css';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isSupabaseAuthConfigured, supabase } from './supabaseClient';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
-const MAX_FILES = 10;
+const RECRUITER_EMAIL = (process.env.REACT_APP_RECRUITER_EMAIL || 'mahatavkanshisaini@gmail.com').toLowerCase();
+const RECRUITER_DEFAULT_PASSWORD = process.env.REACT_APP_RECRUITER_PASSWORD || 'sajalsaini';
+const AUTH_TIMEOUT_MS = 15000;
+
+function withTimeout(promise, timeoutMs = AUTH_TIMEOUT_MS) {
+  let timeoutId;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('Auth request timed out. Check internet and Supabase project status.'));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
+function getAuthErrorMessage(error) {
+  const message = String(error?.message || error || 'Authentication failed');
+  const lower = message.toLowerCase();
+
+  if (lower.includes('email not confirmed')) {
+    return 'Email not confirmed. Open your Supabase verification email, then login again.';
+  }
+
+  if (lower.includes('invalid login credentials')) {
+    return 'Invalid email or password. Check credentials and try again.';
+  }
+
+  return message;
+}
 
 function App() {
-  const [jobDescription, setJobDescription] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState([]);
-  const [mustHaveSkillsInput, setMustHaveSkillsInput] = useState('');
-  const [niceToHaveSkillsInput, setNiceToHaveSkillsInput] = useState('');
-  const [ranking, setRanking] = useState([]);
-  const [failedFiles, setFailedFiles] = useState([]);
-  const [meta, setMeta] = useState(null);
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [minScore, setMinScore] = useState(0);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [authEmail, setAuthEmail] = useState('mahatavkanshisaini@gmail.com');
-  const [authPassword, setAuthPassword] = useState('sajalsaini');
-  const [authUser, setAuthUser] = useState(null);
-  const [accessToken, setAccessToken] = useState('');
+  const [authTab, setAuthTab] = useState('candidate-login');
+  const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  const hasResults = ranking.length > 0 || failedFiles.length > 0;
+  const [candidateEmail, setCandidateEmail] = useState('');
+  const [candidatePassword, setCandidatePassword] = useState('');
+  const [recruiterPassword, setRecruiterPassword] = useState(RECRUITER_DEFAULT_PASSWORD);
 
-  const scoreSummary = useMemo(() => {
-    if (ranking.length === 0) {
-      return { topScore: 0, avgScore: 0 };
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState('');
+
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState('');
+
+  const [jobTitle, setJobTitle] = useState('');
+  const [jobDescription, setJobDescription] = useState('');
+  const [mustHaveSkills, setMustHaveSkills] = useState('');
+  const [niceToHaveSkills, setNiceToHaveSkills] = useState('');
+  const [createJobMessage, setCreateJobMessage] = useState('');
+
+  const [selectedJobId, setSelectedJobId] = useState('');
+  const [resumeFile, setResumeFile] = useState(null);
+  const [submitMessage, setSubmitMessage] = useState('');
+  const [latestScoring, setLatestScoring] = useState(null);
+
+  const [candidates, setCandidates] = useState([]);
+  const [candidateSubmissions, setCandidateSubmissions] = useState([]);
+
+  const selectedJob = useMemo(
+    () => jobs.find((item) => item.id === selectedJobId) || null,
+    [jobs, selectedJobId]
+  );
+
+  const authHeaders = useMemo(() => {
+    if (!token) {
+      return {};
     }
 
-    const scores = ranking.map((item) => Number(item.score) || 0);
-    const topScore = Math.max(...scores);
-    const total = scores.reduce((sum, value) => sum + value, 0);
-
     return {
-      topScore,
-      avgScore: Number((total / scores.length).toFixed(2))
+      Authorization: `Bearer ${token}`
     };
-  }, [ranking]);
+  }, [token]);
 
-  const filteredRanking = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-
-    return ranking.filter((candidate) => {
-      const score = Number(candidate.score) || 0;
-      const inScoreRange = score >= minScore;
-      if (!inScoreRange) {
-        return false;
-      }
-
-      if (!term) {
-        return true;
-      }
-
-      const haystack = [
-        candidate.name,
-        ...(candidate.matchedSkills || []),
-        ...(candidate.missingSkills || [])
-      ]
-        .join(' ')
-        .toLowerCase();
-
-      return haystack.includes(term);
-    });
-  }, [ranking, searchTerm, minScore]);
-
-  useEffect(() => {
-    const handleEscape = (event) => {
-      if (event.key === 'Escape') {
-        setSelectedCandidate(null);
-      }
-    };
-
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, []);
+  const activeEmail = String(user?.email || '').toLowerCase();
+  const isRecruiterUser = Boolean(user) && activeEmail === RECRUITER_EMAIL;
+  const isCandidateUser = Boolean(user) && !isRecruiterUser;
+  const currentRoleLabel = isRecruiterUser ? 'Recruiter Dashboard' : isCandidateUser ? 'Candidate Dashboard' : 'Welcome';
 
   useEffect(() => {
     if (!isSupabaseAuthConfigured || !supabase) {
+      setAuthError('Supabase auth is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY.');
       return;
     }
 
-    let isMounted = true;
+    let mounted = true;
 
-    const loadSession = async () => {
-      const { data, error: sessionError } = await supabase.auth.getSession();
-
-      if (!isMounted) {
+    const syncSession = (session) => {
+      if (!mounted) {
         return;
       }
 
-      if (sessionError) {
-        setAuthError(sessionError.message || 'Unable to restore session.');
-        return;
-      }
-
-      const session = data?.session || null;
-      setAuthUser(session?.user || null);
-      setAccessToken(session?.access_token || '');
+      const loggedUser = session?.user || null;
+      setUser(loggedUser);
+      setToken(session?.access_token || '');
     };
 
-    loadSession();
+    supabase.auth.getSession().then(({ data }) => {
+      syncSession(data?.session || null);
+    });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthUser(session?.user || null);
-      setAccessToken(session?.access_token || '');
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      syncSession(session || null);
       setAuthError('');
     });
 
     return () => {
-      isMounted = false;
-      authListener?.subscription?.unsubscribe();
+      mounted = false;
+      listener?.subscription?.unsubscribe();
     };
   }, []);
 
-  const isPdf = (file) => {
-    if (!file) {
-      return false;
+  const apiGet = useCallback(async (path) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: {
+        ...authHeaders
+      }
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Request failed');
     }
 
-    const hasPdfExtension = file.name.toLowerCase().endsWith('.pdf');
-    const hasPdfMime = file.type === 'application/pdf';
-    return hasPdfExtension || hasPdfMime;
-  };
+    return data;
+  }, [authHeaders]);
 
-  const mergeSelectedFiles = (incomingFiles) => {
-    const validFiles = incomingFiles.filter((file) => isPdf(file));
-    const invalidCount = incomingFiles.length - validFiles.length;
+  const apiPostJson = useCallback(async (path, body) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders
+      },
+      body: JSON.stringify(body)
+    });
 
-    if (invalidCount > 0) {
-      setError(`Ignored ${invalidCount} non-PDF file(s). Only PDF resumes are allowed.`);
-    } else {
-      setError('');
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Request failed');
     }
 
-    if (validFiles.length === 0) {
-      return;
+    return data;
+  }, [authHeaders]);
+
+  const loadJobs = useCallback(async () => {
+    try {
+      setJobsLoading(true);
+      setJobsError('');
+      const data = await apiGet('/jobs');
+      const list = data.jobs || [];
+      setJobs(list);
+
+      if (!selectedJobId && list.length > 0) {
+        setSelectedJobId(list[0].id);
+      }
+    } catch (error) {
+      setJobsError(error.message);
+    } finally {
+      setJobsLoading(false);
     }
+  }, [apiGet, selectedJobId]);
 
-    setSelectedFiles((currentFiles) => {
-      const map = new Map();
-      [...currentFiles, ...validFiles].forEach((file) => {
-        const key = `${file.name}-${file.size}-${file.lastModified}`;
-        map.set(key, file);
-      });
-
-      const merged = Array.from(map.values());
-
-      if (merged.length > MAX_FILES) {
-        setError(`You can upload at most ${MAX_FILES} resumes at once.`);
+  const loadDashboardData = useCallback(async () => {
+    try {
+      if (isRecruiterUser) {
+        const data = await apiGet('/recruiter/candidates');
+        setCandidates(data.candidates || []);
       }
 
-      return merged.slice(0, MAX_FILES);
-    });
-  };
+      if (isCandidateUser) {
+        const data = await apiGet('/candidate/submissions');
+        setCandidateSubmissions(data.submissions || []);
+      }
+    } catch (error) {
+      setSubmitMessage(error.message);
+    }
+  }, [apiGet, isRecruiterUser, isCandidateUser]);
 
-  const handleFileChange = (event) => {
-    const files = Array.from(event.target.files || []);
-    mergeSelectedFiles(files);
-    event.target.value = '';
-  };
-
-  const handleDragOver = (event) => {
-    event.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (event) => {
-    event.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    setIsDragging(false);
-    const droppedFiles = Array.from(event.dataTransfer.files || []);
-    mergeSelectedFiles(droppedFiles);
-  };
-
-  const removeFile = (targetFile) => {
-    setSelectedFiles((files) =>
-      files.filter(
-        (file) =>
-          !(
-            file.name === targetFile.name &&
-            file.size === targetFile.size &&
-            file.lastModified === targetFile.lastModified
-          )
-      )
-    );
-  };
-
-  const clearForm = () => {
-    setSelectedFiles([]);
-    setJobDescription('');
-    setMustHaveSkillsInput('');
-    setNiceToHaveSkillsInput('');
-    setRanking([]);
-    setFailedFiles([]);
-    setMeta(null);
-    setError('');
-    setSearchTerm('');
-    setMinScore(0);
-    setSelectedCandidate(null);
-  };
-
-  const exportCsv = () => {
-    if (ranking.length === 0) {
+  useEffect(() => {
+    if (!token) {
       return;
     }
 
-    const headers = ['Rank', 'Candidate', 'Score', 'Matched Skills', 'Missing Skills'];
-    const rows = ranking.map((candidate) => [
-      candidate.rank,
-      candidate.name,
-      candidate.score,
-      (candidate.matchedSkills || []).join(' | '),
-      (candidate.missingSkills || []).join(' | ')
-    ]);
+    loadJobs();
+    loadDashboardData();
+  }, [token, loadJobs, loadDashboardData]);
 
-    const toCsvValue = (value) => `"${String(value).replace(/"/g, '""')}"`;
-    const csv = [headers, ...rows]
-      .map((row) => row.map(toCsvValue).join(','))
-      .join('\n');
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.href = url;
-    link.download = 'ranked-candidates.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const signIn = async () => {
+  const signInRecruiter = async () => {
     setAuthError('');
 
-    if (!isSupabaseAuthConfigured || !supabase) {
-      setAuthError('Supabase auth is not configured in frontend env.');
+    if (!supabase) {
+      setAuthError('Supabase client not ready.');
       return;
     }
 
-    if (!authEmail.trim() || !authPassword.trim()) {
-      setAuthError('Enter email and password to sign in.');
+    if (!recruiterPassword.trim()) {
+      setAuthError('Enter recruiter password to continue.');
       return;
     }
 
     try {
-      setIsAuthLoading(true);
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: authEmail.trim(),
-        password: authPassword
-      });
+      setAuthLoading(true);
+      const { error } = await withTimeout(
+        supabase.auth.signInWithPassword({
+          email: RECRUITER_EMAIL,
+          password: recruiterPassword
+        })
+      );
 
-      if (signInError) {
-        setAuthError(signInError.message || 'Sign-in failed.');
+      if (error) {
+        setAuthError(getAuthErrorMessage(error));
+      }
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const signInCandidate = async () => {
+    setAuthError('');
+
+    if (!supabase) {
+      setAuthError('Supabase client not ready.');
+      return;
+    }
+
+    if (!candidateEmail.trim() || !candidatePassword.trim()) {
+      setAuthError('Enter candidate email and password.');
+      return;
+    }
+
+    if (candidateEmail.trim().toLowerCase() === RECRUITER_EMAIL) {
+      setAuthError('This email is reserved for recruiter. Use Recruiter Access panel.');
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+      const { error } = await withTimeout(
+        supabase.auth.signInWithPassword({
+          email: candidateEmail.trim(),
+          password: candidatePassword
+        })
+      );
+
+      if (error) {
+        setAuthError(getAuthErrorMessage(error));
+      }
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const signUpCandidate = async () => {
+    setAuthError('');
+
+    if (!supabase) {
+      setAuthError('Supabase client not ready.');
+      return;
+    }
+
+    if (!candidateEmail.trim() || !candidatePassword.trim()) {
+      setAuthError('Enter candidate email and password for signup.');
+      return;
+    }
+
+    if (candidateEmail.trim().toLowerCase() === RECRUITER_EMAIL) {
+      setAuthError('Recruiter email cannot be used in candidate signup.');
+      return;
+    }
+
+    if (candidatePassword.trim().length < 6) {
+      setAuthError('Password must be at least 6 characters.');
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+      const { data, error } = await withTimeout(
+        supabase.auth.signUp({
+          email: candidateEmail.trim(),
+          password: candidatePassword
+        })
+      );
+
+      if (error) {
+        setAuthError(getAuthErrorMessage(error));
         return;
       }
 
-      setAuthUser(data?.user || null);
-      setAccessToken(data?.session?.access_token || '');
-      setAuthPassword('');
-    } catch (signInCatchError) {
-      setAuthError('Unable to sign in right now.');
+      if (data?.session) {
+        setAuthError('Signup successful. Redirecting to candidate dashboard.');
+      } else {
+        setAuthError('Signup successful. Verify your email in Supabase inbox, then login as candidate.');
+      }
+      setAuthTab('candidate-login');
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error));
     } finally {
-      setIsAuthLoading(false);
+      setAuthLoading(false);
     }
   };
 
@@ -278,352 +320,397 @@ function App() {
     }
 
     await supabase.auth.signOut();
-    setAuthUser(null);
-    setAccessToken('');
-    setAuthPassword('');
+    setUser(null);
+    setToken('');
+    setCandidates([]);
+    setCandidateSubmissions([]);
+    setLatestScoring(null);
+    setSubmitMessage('');
   };
 
-  const handleSubmit = async (event) => {
+  const createJob = async (event) => {
     event.preventDefault();
-    setError('');
-    setRanking([]);
-    setFailedFiles([]);
-    setMeta(null);
-    setSelectedCandidate(null);
+    setCreateJobMessage('');
 
-    if (selectedFiles.length === 0) {
-      setError('Please select at least one resume PDF.');
+    try {
+      const data = await apiPostJson('/jobs', {
+        title: jobTitle,
+        description: jobDescription,
+        mustHaveSkills,
+        niceToHaveSkills
+      });
+
+      setCreateJobMessage(data.message || 'Job posted successfully.');
+      setJobTitle('');
+      setJobDescription('');
+      setMustHaveSkills('');
+      setNiceToHaveSkills('');
+      await loadJobs();
+      await loadDashboardData();
+    } catch (error) {
+      setCreateJobMessage(error.message);
+    }
+  };
+
+  const submitResume = async (event) => {
+    event.preventDefault();
+    setSubmitMessage('');
+
+    if (!selectedJobId) {
+      setSubmitMessage('Select a job before uploading resume.');
       return;
     }
 
-    if (!jobDescription.trim()) {
-      setError('Please enter a job description.');
+    if (!resumeFile) {
+      setSubmitMessage('Attach a PDF resume first.');
       return;
     }
 
-    if (!accessToken) {
-      setError('Please sign in with recruiter/admin account before uploading resumes.');
-      return;
-    }
-
-    if (selectedFiles.length > MAX_FILES) {
-      setError(`Please upload a maximum of ${MAX_FILES} resumes.`);
+    const isPdf = resumeFile.type === 'application/pdf' || resumeFile.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      setSubmitMessage('Only PDF resumes are supported.');
       return;
     }
 
     const formData = new FormData();
-    formData.append('jd', jobDescription);
-    formData.append('mustHaveSkills', mustHaveSkillsInput);
-    formData.append('niceToHaveSkills', niceToHaveSkillsInput);
-
-    selectedFiles.forEach((file) => {
-      formData.append('resumes', file);
-    });
+    formData.append('jobId', selectedJobId);
+    formData.append('resume', resumeFile);
 
     try {
-      setIsLoading(true);
-
-      const response = await fetch(`${API_BASE_URL}/upload-multiple`, {
+      const response = await fetch(`${API_BASE_URL}/candidate/submit`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`
+          ...authHeaders
         },
         body: formData
       });
 
       const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || 'Something went wrong while ranking resumes.');
-        if (data.failedFiles) {
-          setFailedFiles(data.failedFiles);
-        }
-        return;
+        throw new Error(data.error || 'Submission failed');
       }
 
-      setRanking((data.ranking || []).map((item, index) => ({
-        ...item,
-        rank: index + 1
-      })));
-      setFailedFiles(data.failedFiles || []);
-      setMeta(data.meta || null);
-    } catch (requestError) {
-      setError(`Unable to connect to backend at ${API_BASE_URL}.`);
-    } finally {
-      setIsLoading(false);
+      setSubmitMessage('Resume uploaded and scored successfully.');
+      setLatestScoring(data.scoring || null);
+      setResumeFile(null);
+      await loadDashboardData();
+    } catch (error) {
+      setSubmitMessage(error.message);
     }
   };
 
-  return (
-    <div className="app-shell">
-      <main className="card">
-        <h1>Talent Match Studio</h1>
-        <p className="subtitle">
-          Upload resumes, paste a job description, and get an explainable ranking in seconds.
-        </p>
+  const loadCandidatesByJob = async (jobId) => {
+    const endpoint = jobId ? `/recruiter/candidates?jobId=${encodeURIComponent(jobId)}` : '/recruiter/candidates';
 
-        {isSupabaseAuthConfigured ? (
-          <section className="summary-card" aria-live="polite">
-            <p><strong>Auth</strong> {authUser ? 'Connected' : 'Sign in required'}</p>
-            {authUser ? (
-              <>
-                <p>{authUser.email}</p>
-                <button type="button" className="ghost-button" onClick={signOut} disabled={isAuthLoading}>
-                  Sign Out
-                </button>
-              </>
-            ) : (
-              <>
-                <label htmlFor="authEmail" className="label-text">Recruiter Email</label>
-                <input
-                  id="authEmail"
-                  type="email"
-                  placeholder="recruiter@company.com"
-                  value={authEmail}
-                  onChange={(event) => setAuthEmail(event.target.value)}
-                />
-                <label htmlFor="authPassword" className="label-text">Password</label>
-                <input
-                  id="authPassword"
-                  type="password"
-                  placeholder="Enter password"
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                />
-                <button type="button" onClick={signIn} disabled={isAuthLoading}>
-                  {isAuthLoading ? 'Signing in...' : 'Sign In'}
-                </button>
-              </>
-            )}
-            {authError && <p className="error-box">{authError}</p>}
-          </section>
-        ) : (
-          <p className="error-box">Supabase auth is not configured in frontend env.</p>
-        )}
+    try {
+      const data = await apiGet(endpoint);
+      setCandidates(data.candidates || []);
+    } catch (error) {
+      setSubmitMessage(error.message);
+    }
+  };
 
-        <form onSubmit={handleSubmit} className="form-grid">
-          <label htmlFor="resumes" className="label-text">Upload Resumes (PDF, max {MAX_FILES})</label>
-          <div
-            className={`drop-zone ${isDragging ? 'dragging' : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <p className="drop-title">Drag and drop resume PDFs here</p>
-            <p className="drop-subtitle">or use file picker below</p>
-          </div>
-          <input
-            id="resumes"
-            name="resumes"
-            type="file"
-            accept=".pdf,application/pdf"
-            multiple
-            onChange={handleFileChange}
-          />
+  const downloadResume = async (submission) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/recruiter/submissions/${submission.id}/download`, {
+        headers: {
+          ...authHeaders
+        }
+      });
 
-          {selectedFiles.length > 0 && (
-            <ul className="file-list" aria-label="Selected resume files">
-              {selectedFiles.map((file) => {
-                const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-                return (
-                  <li key={fileKey} className="file-chip">
-                    <span>{file.name}</span>
-                    <button type="button" className="icon-button" onClick={() => removeFile(file)}>
-                      Remove
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+      if (!response.ok) {
+        const errorPayload = await response.json();
+        throw new Error(errorPayload.error || 'Download failed');
+      }
 
-          <label htmlFor="jobDescription" className="label-text">Job Description</label>
-          <textarea
-            id="jobDescription"
-            name="jobDescription"
-            rows="6"
-            placeholder="Paste job description or required skills here..."
-            value={jobDescription}
-            onChange={(event) => setJobDescription(event.target.value)}
-          />
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = submission.file_name || 'resume.pdf';
+      anchor.click();
+      URL.revokeObjectURL(href);
+    } catch (error) {
+      setSubmitMessage(error.message);
+    }
+  };
 
-          <label htmlFor="mustHaveSkills" className="label-text">Must-Have Skills (comma/new-line)</label>
-          <textarea
-            id="mustHaveSkills"
-            name="mustHaveSkills"
-            rows="3"
-            placeholder="react, node.js, sql"
-            value={mustHaveSkillsInput}
-            onChange={(event) => setMustHaveSkillsInput(event.target.value)}
-          />
-
-          <label htmlFor="niceToHaveSkills" className="label-text">Nice-To-Have Skills (comma/new-line)</label>
-          <textarea
-            id="niceToHaveSkills"
-            name="niceToHaveSkills"
-            rows="3"
-            placeholder="mongodb, python"
-            value={niceToHaveSkillsInput}
-            onChange={(event) => setNiceToHaveSkillsInput(event.target.value)}
-          />
-
-          <div className="actions-row">
-            <button type="submit" disabled={isLoading}>
-              {isLoading ? 'Ranking...' : 'Submit'}
-            </button>
-            <button type="button" className="ghost-button" onClick={clearForm} disabled={isLoading}>
-              Clear
-            </button>
-            <button type="button" className="ghost-button" onClick={exportCsv} disabled={ranking.length === 0 || isLoading}>
-              Export CSV
-            </button>
-          </div>
-        </form>
-
-        {error && <p className="error-box">{error}</p>}
-
-        {hasResults && (
-          <section className="results">
-            <h2>Ranked Candidates</h2>
-
-            <div className="filters-grid">
-              <label className="label-text" htmlFor="search">Search Candidate / Skills</label>
-              <input
-                id="search"
-                type="text"
-                placeholder="e.g. react, sql, sejal"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-              />
-
-              <label className="label-text" htmlFor="minScore">Minimum Score: {minScore}%</label>
-              <input
-                id="minScore"
-                type="range"
-                min="0"
-                max="100"
-                step="5"
-                value={minScore}
-                onChange={(event) => setMinScore(Number(event.target.value))}
-              />
-            </div>
-
-            <div className="summary-grid">
-              <article className="summary-card">
-                <p>Total Candidates</p>
-                <strong>{ranking.length}</strong>
-              </article>
-              <article className="summary-card">
-                <p>Top Score</p>
-                <strong>{scoreSummary.topScore}%</strong>
-              </article>
-              <article className="summary-card">
-                <p>Average Score</p>
-                <strong>{scoreSummary.avgScore}%</strong>
-              </article>
-              <article className="summary-card">
-                <p>JD Skills</p>
-                <strong>{meta?.jdSkills?.length || 0}</strong>
-              </article>
-              <article className="summary-card">
-                <p>Must-Have Skills</p>
-                <strong>{meta?.criteria?.mustHaveSkills?.length || 0}</strong>
-              </article>
-              <article className="summary-card">
-                <p>Nice-To-Have Skills</p>
-                <strong>{meta?.criteria?.niceToHaveSkills?.length || 0}</strong>
-              </article>
-              <article className="summary-card">
-                <p>Recognized Skills</p>
-                <strong>{meta?.jdSkills?.join(', ') || 'None'}</strong>
-              </article>
-            </div>
-
-            {filteredRanking.length === 0 ? (
-              <p className="empty-results">No candidates match the current filters.</p>
-            ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Candidate</th>
-                    <th>Score</th>
-                    <th>Matched Skills</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRanking.map((candidate) => (
-                    <tr key={candidate.name}>
-                      <td>{candidate.rank}</td>
-                      <td>{candidate.name}</td>
-                      <td>
-                        <div className="score-wrap">
-                          <span>{candidate.score}%</span>
-                          <small>{candidate.matchedCount}/{candidate.requiredCount} skills matched</small>
-                          <div className="score-track" aria-hidden="true">
-                            <div className="score-fill" style={{ width: `${candidate.score}%` }} />
-                          </div>
-                        </div>
-                      </td>
-                      <td>{(candidate.matchedSkills || []).join(', ') || 'None'}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => setSelectedCandidate(candidate)}
-                        >
-                          View Details
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            )}
-
-            {failedFiles.length > 0 && (
-              <div className="failed-files">
-                <h3>Files Not Processed</h3>
-                <ul>
-                  {failedFiles.map((file) => (
-                    <li key={file.name}>{file.name}: {file.error}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
-        )}
+  if (!isSupabaseAuthConfigured) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <h1>Talent Match Studio</h1>
+          <p className="error">Configure frontend env first:</p>
+          <p className="error">REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY</p>
+        </section>
       </main>
+    );
+  }
 
-      {selectedCandidate && (
-        <div className="modal-overlay" onClick={() => setSelectedCandidate(null)} role="presentation">
-          <div className="modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <h3>{selectedCandidate.name}</h3>
-            <p className="modal-score">Score: {selectedCandidate.score}%</p>
-            <p className="modal-score-detail">
-              Match: {selectedCandidate.matchedCount}/{selectedCandidate.requiredCount} required skills
-            </p>
+  return (
+    <main className="shell">
+      <section className="panel">
+        <header className="hero">
+          <p className="eyebrow">Production Resume Intelligence Platform</p>
+          <h1>Talent Match Studio</h1>
+          <p>
+            {currentRoleLabel} {user?.email ? `- ${user.email}` : ''}
+          </p>
+        </header>
 
-            <div className="modal-section">
-              <h4>Matched Skills</h4>
-              <p>{(selectedCandidate.matchedSkills || []).join(', ') || 'None'}</p>
-            </div>
+        {!user && (
+          <section className="auth-grid">
+            <article className="auth-card recruiter-card">
+              <h2>Recruiter Access</h2>
+              <p>Only one recruiter account is allowed for now.</p>
+              <label>Recruiter Email</label>
+              <input type="email" value={RECRUITER_EMAIL} readOnly />
+              <label>Recruiter Password</label>
+              <input
+                type="password"
+                value={recruiterPassword}
+                onChange={(event) => setRecruiterPassword(event.target.value)}
+              />
+              <button type="button" onClick={signInRecruiter} disabled={authLoading}>
+                {authLoading ? 'Signing in...' : 'Login as Recruiter'}
+              </button>
+            </article>
 
-            <div className="modal-section">
-              <h4>Missing Skills</h4>
-              <p>{(selectedCandidate.missingSkills || []).join(', ') || 'None'}</p>
-            </div>
+            <article className="auth-card candidate-card">
+              <h2>Candidate Access</h2>
+              <div className="mini-tabs">
+                <button
+                  type="button"
+                  className={authTab === 'candidate-login' ? 'active' : ''}
+                  onClick={() => setAuthTab('candidate-login')}
+                >
+                  Login
+                </button>
+                <button
+                  type="button"
+                  className={authTab === 'candidate-signup' ? 'active' : ''}
+                  onClick={() => setAuthTab('candidate-signup')}
+                >
+                  Signup
+                </button>
+              </div>
 
-            <button type="button" onClick={() => setSelectedCandidate(null)}>
-              Close
+              <label>Candidate Email</label>
+              <input
+                type="email"
+                placeholder="candidate@email.com"
+                value={candidateEmail}
+                onChange={(event) => setCandidateEmail(event.target.value)}
+              />
+              <label>Candidate Password</label>
+              <input
+                type="password"
+                placeholder="Create strong password"
+                value={candidatePassword}
+                onChange={(event) => setCandidatePassword(event.target.value)}
+              />
+
+              {authTab === 'candidate-login' ? (
+                <button type="button" onClick={signInCandidate} disabled={authLoading}>
+                  {authLoading ? 'Logging in...' : 'Login as Candidate'}
+                </button>
+              ) : (
+                <button type="button" onClick={signUpCandidate} disabled={authLoading}>
+                  {authLoading ? 'Creating account...' : 'Signup as Candidate'}
+                </button>
+              )}
+            </article>
+          </section>
+        )}
+
+        {authError && <p className="error">{authError}</p>}
+
+        {user && (
+          <div className="toolbar">
+            <button type="button" className="ghost" onClick={loadJobs}>
+              Refresh Jobs
+            </button>
+            <button type="button" className="ghost" onClick={loadDashboardData}>
+              Refresh Dashboard
+            </button>
+            <button type="button" className="danger" onClick={signOut}>
+              Sign Out
             </button>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {jobsError && <p className="error">{jobsError}</p>}
+        {jobsLoading && <p className="hint">Loading jobs...</p>}
+
+        {isRecruiterUser && (
+          <section className="grid-two">
+            <article className="card">
+              <h2>Post New Job</h2>
+              <form onSubmit={createJob} className="stack">
+                <label>Job Title</label>
+                <input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} required />
+
+                <label>Job Description</label>
+                <textarea
+                  rows="5"
+                  value={jobDescription}
+                  onChange={(event) => setJobDescription(event.target.value)}
+                  required
+                />
+
+                <label>Must-Have Skills (comma/new line)</label>
+                <textarea
+                  rows="3"
+                  value={mustHaveSkills}
+                  onChange={(event) => setMustHaveSkills(event.target.value)}
+                  placeholder="react, node.js, sql"
+                />
+
+                <label>Nice-To-Have Skills (comma/new line)</label>
+                <textarea
+                  rows="3"
+                  value={niceToHaveSkills}
+                  onChange={(event) => setNiceToHaveSkills(event.target.value)}
+                  placeholder="mongodb, python"
+                />
+
+                <button type="submit">Publish Job</button>
+              </form>
+              {createJobMessage && <p className="hint">{createJobMessage}</p>}
+            </article>
+
+            <article className="card">
+              <h2>Recruiter Dashboard</h2>
+              <label>Filter by Job</label>
+              <select
+                value={selectedJobId}
+                onChange={(event) => {
+                  const nextJobId = event.target.value;
+                  setSelectedJobId(nextJobId);
+                  loadCandidatesByJob(nextJobId);
+                }}
+              >
+                <option value="">All Jobs</option>
+                {jobs.map((job) => (
+                  <option key={job.id} value={job.id}>{job.title}</option>
+                ))}
+              </select>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Candidate</th>
+                      <th>Score</th>
+                      <th>Matched Skills</th>
+                      <th>Resume</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.map((candidate) => (
+                      <tr key={candidate.id}>
+                        <td>{candidate.candidate_email}</td>
+                        <td>{candidate.score}%</td>
+                        <td>{(candidate.matched_skills || []).join(', ') || 'None'}</td>
+                        <td>
+                          <button type="button" className="ghost" onClick={() => downloadResume(candidate)}>
+                            Download
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {candidates.length === 0 && (
+                      <tr>
+                        <td colSpan="4">No candidate submissions yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {isCandidateUser && (
+          <section className="grid-two">
+            <article className="card">
+              <h2>Available Jobs</h2>
+              <div className="job-list">
+                {jobs.map((job) => (
+                  <label key={job.id} className={`job-item ${selectedJobId === job.id ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="job"
+                      checked={selectedJobId === job.id}
+                      onChange={() => setSelectedJobId(job.id)}
+                    />
+                    <span>{job.title}</span>
+                    <small>{job.description}</small>
+                    <small><strong>Must:</strong> {(job.must_have_skills || []).join(', ') || 'None'}</small>
+                    <small><strong>Nice:</strong> {(job.nice_to_have_skills || []).join(', ') || 'None'}</small>
+                  </label>
+                ))}
+                {jobs.length === 0 && <p className="hint">No jobs published yet.</p>}
+              </div>
+            </article>
+
+            <article className="card">
+              <h2>Candidate Dashboard</h2>
+              <p className="hint">Selected Job: {selectedJob ? selectedJob.title : 'None'}</p>
+
+              <form onSubmit={submitResume} className="stack">
+                <label>Upload Resume (PDF)</label>
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={(event) => setResumeFile(event.target.files?.[0] || null)}
+                />
+                <button type="submit">Submit Resume</button>
+              </form>
+
+              {latestScoring && (
+                <div className="hint" aria-live="polite">
+                  <strong>Latest Scoring Breakdown</strong>
+                  <div>Must-have match: {latestScoring.mustHaveMatchedCount}/{latestScoring.mustHaveRequiredCount}</div>
+                  <div>Nice-to-have match: {latestScoring.niceToHaveMatchedCount}/{latestScoring.niceToHaveRequiredCount}</div>
+                </div>
+              )}
+
+              <h3>Your Submissions</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Score</th>
+                      <th>Matched Skills</th>
+                      <th>Missing Skills</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidateSubmissions.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.file_name}</td>
+                        <td>{item.score}%</td>
+                        <td>{(item.matched_skills || []).join(', ') || 'None'}</td>
+                        <td>{(item.missing_skills || []).join(', ') || 'None'}</td>
+                      </tr>
+                    ))}
+                    {candidateSubmissions.length === 0 && (
+                      <tr>
+                        <td colSpan="4">No submissions yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {submitMessage && <p className="hint">{submitMessage}</p>}
+      </section>
+    </main>
   );
 }
 

@@ -1,4 +1,3 @@
-// 🔹 1. IMPORTS
 require("dotenv").config();
 
 const express = require("express");
@@ -6,6 +5,7 @@ const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 const { PDFParse } = require("pdf-parse");
 const { supabase, isSupabaseConfigured } = require("./supabaseClient");
 
@@ -15,15 +15,20 @@ const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN || "http://localhost:3000"
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+
 const AUTH_REQUIRED = process.env.AUTH_REQUIRED !== "false";
-const ALLOWED_ROLES = (process.env.ALLOWED_ROLES || "recruiter,admin")
-    .split(",")
-    .map((role) => role.trim().toLowerCase())
-    .filter(Boolean);
-const MAX_FILES = 10;
+const RECRUITER_EMAIL = String(
+    process.env.RECRUITER_EMAIL || "mahatavkanshisaini@gmail.com"
+).toLowerCase();
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-// 🔹 2. MIDDLEWARE
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 app.disable("x-powered-by");
 app.use(cors({
     origin: (origin, callback) => {
@@ -36,41 +41,30 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "1mb" }));
 
-// 🔹 3. MULTER CONFIG
-const uploadDir = path.join(__dirname, "uploads");
-
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + "-" + file.originalname);
-    }
-});
-
 const upload = multer({
-    storage: storage,
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, uploadDir),
+        filename: (req, file, cb) => {
+            const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+            cb(null, `${Date.now()}-${safeName}`);
+        }
+    }),
     limits: {
-        files: MAX_FILES,
-        fileSize: MAX_FILE_SIZE
+        fileSize: MAX_FILE_SIZE,
+        files: 1
     },
     fileFilter: (req, file, cb) => {
         const isPdfMime = file.mimetype === "application/pdf";
-        const isPdfExt = path.extname(file.originalname).toLowerCase() === ".pdf";
+        const isPdfExt = path.extname(file.originalname || "").toLowerCase() === ".pdf";
 
         if (isPdfMime || isPdfExt) {
             return cb(null, true);
         }
 
-        cb(new Error(`Only PDF files are allowed: ${file.originalname}`));
+        return cb(new Error(`Only PDF files are allowed: ${file.originalname}`));
     }
 });
 
-// 🔹 4. SKILL PATTERNS
 const skillDefinitions = [
     { key: "javascript", regex: /\b(javascript|js)\b/i },
     { key: "react", regex: /\b(react|reactjs|react\.js)\b/i },
@@ -84,7 +78,6 @@ const skillDefinitions = [
     { key: "sql", regex: /\b(sql|mysql|postgresql|postgres|sqlite|mssql)\b/i }
 ];
 
-// 🔹 5. EXTRACT SKILLS FUNCTION
 function extractSkills(text) {
     const source = text || "";
 
@@ -93,7 +86,7 @@ function extractSkills(text) {
         .map((definition) => definition.key);
 }
 
-function resolveRequestedSkills(input) {
+function parseSkillInput(input) {
     if (!input || typeof input !== "string") {
         return [];
     }
@@ -111,9 +104,41 @@ function uniqueSkills(skills) {
     return Array.from(new Set(skills));
 }
 
+function calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills) {
+    const mustHaveMatched = mustHaveSkills.filter((skill) => resumeSkills.includes(skill));
+    const niceToHaveMatched = niceToHaveSkills.filter((skill) => resumeSkills.includes(skill));
+
+    const mustHaveWeight = 2;
+    const niceToHaveWeight = 1;
+
+    const weightedMatched = (mustHaveMatched.length * mustHaveWeight) + (niceToHaveMatched.length * niceToHaveWeight);
+    const weightedRequired = (mustHaveSkills.length * mustHaveWeight) + (niceToHaveSkills.length * niceToHaveWeight);
+
+    const score = weightedRequired > 0
+        ? (weightedMatched / weightedRequired) * 100
+        : 0;
+
+    return {
+        score: Number(score.toFixed(2)),
+        matchedSkills: uniqueSkills([...mustHaveMatched, ...niceToHaveMatched]),
+        missingSkills: uniqueSkills([
+            ...mustHaveSkills.filter((skill) => !mustHaveMatched.includes(skill)),
+            ...niceToHaveSkills.filter((skill) => !niceToHaveMatched.includes(skill))
+        ]),
+        mustHaveMatchedCount: mustHaveMatched.length,
+        mustHaveRequiredCount: mustHaveSkills.length,
+        niceToHaveMatchedCount: niceToHaveMatched.length,
+        niceToHaveRequiredCount: niceToHaveSkills.length
+    };
+}
+
 async function authenticateUser(req, res, next) {
     if (!AUTH_REQUIRED) {
-        req.user = null;
+        req.user = {
+            id: "local-dev",
+            email: RECRUITER_EMAIL,
+            role: "recruiter"
+        };
         return next();
     }
 
@@ -135,75 +160,85 @@ async function authenticateUser(req, res, next) {
     }
 
     const { data, error } = await supabase.auth.getUser(token);
-
     if (error || !data?.user) {
         return res.status(401).json({
             error: "Invalid or expired token"
         });
     }
 
-    const role = String(
-        data.user.app_metadata?.role ||
-        data.user.user_metadata?.role ||
-        "candidate"
+    const email = String(data.user.email || "").toLowerCase();
+    const metadataRole = String(
+        data.user.app_metadata?.role || data.user.user_metadata?.role || ""
     ).toLowerCase();
 
-    if (!ALLOWED_ROLES.includes(role)) {
-        return res.status(403).json({
-            error: `Role '${role}' is not allowed`
-        });
-    }
+    const role = email === RECRUITER_EMAIL || metadataRole === "recruiter" || metadataRole === "admin"
+        ? "recruiter"
+        : "candidate";
 
     req.user = {
         id: data.user.id,
-        email: data.user.email,
+        email,
         role
     };
+    req.accessToken = token;
 
     return next();
 }
 
-// 🔹 6. CALCULATE SCORE FUNCTION
-function calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills) {
-    const mustHaveMatched = mustHaveSkills.filter((skill) => resumeSkills.includes(skill));
-    const niceToHaveMatched = niceToHaveSkills.filter((skill) => resumeSkills.includes(skill));
-    const matched = uniqueSkills([...mustHaveMatched, ...niceToHaveMatched]);
-    const missing = uniqueSkills([
-        ...mustHaveSkills.filter((skill) => !mustHaveMatched.includes(skill)),
-        ...niceToHaveSkills.filter((skill) => !niceToHaveMatched.includes(skill))
-    ]);
+function requireRole(allowedRoles) {
+    return (req, res, next) => {
+        if (!req.user || !allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({
+                error: `Access denied for role '${req.user?.role || "unknown"}'`
+            });
+        }
 
-    const mustHaveWeight = 2;
-    const niceToHaveWeight = 1;
-    const weightedMatched = (mustHaveMatched.length * mustHaveWeight) + (niceToHaveMatched.length * niceToHaveWeight);
-    const weightedRequired = (mustHaveSkills.length * mustHaveWeight) + (niceToHaveSkills.length * niceToHaveWeight);
-
-    const score = weightedRequired > 0
-        ? (weightedMatched / weightedRequired) * 100
-        : 0;
-
-    return {
-        matchedSkills: matched,
-        missingSkills: missing,
-        matchedCount: matched.length,
-        requiredCount: mustHaveSkills.length + niceToHaveSkills.length,
-        mustHaveMatchedCount: mustHaveMatched.length,
-        mustHaveRequiredCount: mustHaveSkills.length,
-        niceToHaveMatchedCount: niceToHaveMatched.length,
-        niceToHaveRequiredCount: niceToHaveSkills.length,
-        weights: {
-            mustHave: mustHaveWeight,
-            niceToHave: niceToHaveWeight
-        },
-        score: Number(score.toFixed(2))
+        return next();
     };
 }
 
-// 🔹 7. ROUTES
+function ensureSupabaseDataReady(res) {
+    if (!isSupabaseConfigured || !supabase) {
+        res.status(500).json({
+            error: "Supabase is not configured"
+        });
+        return false;
+    }
 
-// Test route
+    return true;
+}
+
+function getRequestSupabase(req) {
+    if (!req?.accessToken || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        return supabase;
+    }
+
+    return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        global: {
+            headers: {
+                Authorization: `Bearer ${req.accessToken}`
+            }
+        }
+    });
+}
+
+function withSchemaHint(errorMessage) {
+    if (!errorMessage) {
+        return "Unknown Supabase error";
+    }
+
+    if (
+        errorMessage.includes("schema cache") ||
+        errorMessage.includes("Could not find the table")
+    ) {
+        return `${errorMessage}. Run backend/supabase_schema.sql in Supabase SQL Editor for this project.`;
+    }
+
+    return errorMessage;
+}
+
 app.get("/", (req, res) => {
-    res.send("Server is running 🚀");
+    res.send("Resume ranking backend is running");
 });
 
 app.get("/health", (req, res) => {
@@ -217,193 +252,279 @@ app.get("/health", (req, res) => {
 app.get("/auth/me", authenticateUser, (req, res) => {
     res.json({
         authRequired: AUTH_REQUIRED,
-        allowedRoles: ALLOWED_ROLES,
+        recruiterEmail: RECRUITER_EMAIL,
         user: req.user
     });
 });
 
-// 🔥 UPDATED MAIN ROUTE
-app.post("/upload-multiple", authenticateUser, upload.array("resumes", MAX_FILES), async (req, res) => {
+app.post("/jobs", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const title = String(req.body.title || "").trim();
+    const description = String(req.body.description || "").trim();
+
+    if (!title || !description) {
+        return res.status(400).json({
+            error: "title and description are required"
+        });
+    }
+
+    const mustHaveSkills = uniqueSkills(parseSkillInput(req.body.mustHaveSkills || ""));
+    const niceToHaveSkills = uniqueSkills(
+        parseSkillInput(req.body.niceToHaveSkills || "")
+            .filter((skill) => !mustHaveSkills.includes(skill))
+    );
+
+    const payload = {
+        title,
+        description,
+        must_have_skills: mustHaveSkills,
+        nice_to_have_skills: niceToHaveSkills,
+        created_by_email: req.user.email
+    };
+
+    const { data, error } = await db
+        .from("jobs")
+        .insert(payload)
+        .select("id,title,description,must_have_skills,nice_to_have_skills,created_by_email,created_at")
+        .single();
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to create job: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.status(201).json({
+        message: "Job created",
+        job: data
+    });
+});
+
+app.get("/jobs", authenticateUser, async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const { data, error } = await db
+        .from("jobs")
+        .select("id,title,description,must_have_skills,nice_to_have_skills,created_by_email,created_at")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to load jobs: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.json({ jobs: data || [] });
+});
+
+app.post("/candidate/submit", authenticateUser, requireRole(["candidate"]), upload.single("resume"), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const resumeFile = req.file;
+    const jobId = String(req.body.jobId || "").trim();
+
+    if (!jobId) {
+        return res.status(400).json({
+            error: "jobId is required"
+        });
+    }
+
+    if (!resumeFile) {
+        return res.status(400).json({
+            error: "resume PDF is required"
+        });
+    }
+
+    const { data: job, error: jobError } = await db
+        .from("jobs")
+        .select("id,title,description,must_have_skills,nice_to_have_skills")
+        .eq("id", jobId)
+        .single();
+
+    if (jobError || !job) {
+        return res.status(404).json({
+            error: "Job not found"
+        });
+    }
+
+    let parser = null;
+
     try {
-        const files = req.files;
-        const jobDescription = req.body.jd || "";
-        const mustHaveInput = req.body.mustHaveSkills || "";
-        const niceToHaveInput = req.body.niceToHaveSkills || "";
+        const dataBuffer = fs.readFileSync(resumeFile.path);
+        parser = new PDFParse({ data: dataBuffer });
+        const parsed = await parser.getText();
+        const resumeText = parsed.text || "";
 
-        if (!files || files.length === 0) {
-            return res.status(400).json({
-                error: "No resume files uploaded"
-            });
-        }
+        const resumeSkills = extractSkills(resumeText);
+        const mustHaveSkills = uniqueSkills(job.must_have_skills || []);
+        const niceToHaveSkills = uniqueSkills(job.nice_to_have_skills || []);
+        const result = calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills);
 
-        const extractedFromJd = extractSkills(jobDescription.trim());
-        const requestedMustHave = resolveRequestedSkills(mustHaveInput);
-        const requestedNiceToHave = resolveRequestedSkills(niceToHaveInput);
-
-        const mustHaveSkills = uniqueSkills(
-            requestedMustHave.length > 0 ? requestedMustHave : extractedFromJd
-        );
-
-        const niceToHaveSkills = uniqueSkills(
-            requestedNiceToHave.filter((skill) => !mustHaveSkills.includes(skill))
-        );
-
-        const jdSkills = uniqueSkills([...mustHaveSkills, ...niceToHaveSkills]);
-
-        if (jdSkills.length === 0) {
-            return res.status(400).json({
-                error: "No recognized JD skills found. Include skills like JavaScript, React, Node.js, SQL, etc."
-            });
-        }
-
-        let results = [];
-        let failedFiles = [];
-
-        for (let file of files) {
-            let parser = null;
-
-            try {
-                const dataBuffer = fs.readFileSync(file.path);
-                parser = new PDFParse({ data: dataBuffer });
-                const data = await parser.getText();
-
-                const resumeText = data.text;
-
-                const resumeSkills = extractSkills(resumeText);
-                const result = calculateScore(resumeSkills, mustHaveSkills, niceToHaveSkills);
-
-                results.push({
-                    name: file.originalname,
-                    score: result.score,
-                    matchedSkills: result.matchedSkills,
-                    missingSkills: result.missingSkills,
-                    matchedCount: result.matchedCount,
-                    requiredCount: result.requiredCount,
-                    mustHaveMatchedCount: result.mustHaveMatchedCount,
-                    mustHaveRequiredCount: result.mustHaveRequiredCount,
-                    niceToHaveMatchedCount: result.niceToHaveMatchedCount,
-                    niceToHaveRequiredCount: result.niceToHaveRequiredCount
-                });
-            } catch (parseError) {
-                failedFiles.push({
-                    name: file.originalname,
-                    error: "Could not parse this file as PDF"
-                });
-            } finally {
-                if (parser) {
-                    await parser.destroy();
-                }
-            }
-        }
-
-        if (results.length === 0) {
-            return res.status(400).json({
-                error: "No valid PDF resumes were parsed",
-                failedFiles
-            });
-        }
-
-        // 🔥 SORT (IMPORTANT)
-        results.sort((a, b) => b.score - a.score);
-
-        let supabaseInsertStatus = {
-            enabled: isSupabaseConfigured,
-            savedCount: 0,
-            error: null
+        const insertPayload = {
+            job_id: job.id,
+            candidate_user_id: req.user.id,
+            candidate_email: req.user.email,
+            file_name: resumeFile.originalname,
+            file_storage_path: resumeFile.path,
+            score: result.score,
+            matched_skills: result.matchedSkills,
+            missing_skills: result.missingSkills
         };
 
-        if (isSupabaseConfigured) {
-            const rowsToInsert = results.map((item) => ({
-                file_name: item.name,
-                job_description: jobDescription,
-                score: item.score,
-                matched_skills: item.matchedSkills.join(", "),
-                missing_skills: item.missingSkills.join(", ")
-            }));
+        const { data: submission, error: insertError } = await db
+            .from("candidate_submissions")
+            .insert(insertPayload)
+            .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+            .single();
 
-            const { error } = await supabase
-                .from("resumes")
-                .insert(rowsToInsert);
-
-            if (error) {
-                console.error("Supabase insert failed:", error);
-                supabaseInsertStatus.error = error.message;
-            } else {
-                supabaseInsertStatus.savedCount = rowsToInsert.length;
-            }
-        }
-
-        res.json({
-            message: "Ranking completed ✅",
-            ranking: results,
-            failedFiles,
-            storage: {
-                supabase: supabaseInsertStatus
-            },
-            meta: {
-                filesProcessed: results.length,
-                filesFailed: failedFiles.length,
-                jdSkills,
-                criteria: {
-                    mustHaveSkills,
-                    niceToHaveSkills,
-                    weights: {
-                        mustHave: 2,
-                        niceToHave: 1
-                    }
-                },
-                actor: req.user
-            }
-        });
-
-    } catch (error) {
-        console.error(error);
-
-        if (error.message && error.message.startsWith("Only PDF files are allowed")) {
-            return res.status(400).json({
-                error: error.message
+        if (insertError) {
+            return res.status(500).json({
+                error: `Unable to save submission: ${withSchemaHint(insertError.message)}`
             });
         }
 
-        res.status(500).json({
-            error: "Error processing resumes"
+        return res.status(201).json({
+            message: "Resume submitted and scored",
+            submission,
+            scoring: {
+                mustHaveMatchedCount: result.mustHaveMatchedCount,
+                mustHaveRequiredCount: result.mustHaveRequiredCount,
+                niceToHaveMatchedCount: result.niceToHaveMatchedCount,
+                niceToHaveRequiredCount: result.niceToHaveRequiredCount
+            }
         });
+    } catch (parseError) {
+        return res.status(400).json({
+            error: "Could not parse this file as PDF"
+        });
+    } finally {
+        if (parser) {
+            await parser.destroy();
+        }
     }
 });
 
+app.get("/candidate/submissions", authenticateUser, requireRole(["candidate"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const { data, error } = await db
+        .from("candidate_submissions")
+        .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+        .eq("candidate_user_id", req.user.id)
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to load submissions: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.json({ submissions: data || [] });
+});
+
+app.get("/recruiter/candidates", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const jobId = String(req.query.jobId || "").trim();
+
+    let query = db
+        .from("candidate_submissions")
+        .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+        .order("score", { ascending: false });
+
+    if (jobId) {
+        query = query.eq("job_id", jobId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to load candidates: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.json({ candidates: data || [] });
+});
+
+app.get("/recruiter/submissions/:id/download", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const submissionId = String(req.params.id || "").trim();
+
+    const { data, error } = await db
+        .from("candidate_submissions")
+        .select("id,file_name,file_storage_path")
+        .eq("id", submissionId)
+        .single();
+
+    if (error || !data) {
+        return res.status(404).json({
+            error: "Submission not found"
+        });
+    }
+
+    const filePath = data.file_storage_path;
+    if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({
+            error: "Resume file not found"
+        });
+    }
+
+    return res.download(filePath, data.file_name || "resume.pdf");
+});
+
 app.use((err, req, res, next) => {
-    console.error(err);
-
-    if (err.code === "LIMIT_FILE_SIZE") {
+    if (err?.code === "LIMIT_FILE_SIZE") {
         return res.status(400).json({
-            error: `Each resume file must be <= ${MAX_FILE_SIZE / (1024 * 1024)}MB`
+            error: `Resume file must be <= ${MAX_FILE_SIZE / (1024 * 1024)}MB`
         });
     }
 
-    if (err.code === "LIMIT_FILE_COUNT") {
-        return res.status(400).json({
-            error: `You can upload up to ${MAX_FILES} resumes at once`
-        });
-    }
-
-    if (err && err.message && err.message.startsWith("Only PDF files are allowed")) {
+    if (err?.message?.startsWith("Only PDF files are allowed")) {
         return res.status(400).json({
             error: err.message
         });
     }
 
-    if (err && err.message === "CORS origin not allowed") {
+    if (err?.message === "CORS origin not allowed") {
         return res.status(403).json({
             error: "Origin is not allowed"
         });
     }
+
+    console.error(err);
 
     return res.status(500).json({
         error: "Unexpected server error"
     });
 });
 
-// 🔹 8. START SERVER
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
