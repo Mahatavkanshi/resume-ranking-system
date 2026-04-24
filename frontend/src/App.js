@@ -64,7 +64,10 @@ function App() {
   const [latestScoring, setLatestScoring] = useState(null);
 
   const [candidates, setCandidates] = useState([]);
+  const [shortlist, setShortlist] = useState([]);
   const [candidateSubmissions, setCandidateSubmissions] = useState([]);
+  const [candidateTimeline, setCandidateTimeline] = useState([]);
+  const [statusUpdateLoadingId, setStatusUpdateLoadingId] = useState('');
 
   const selectedJob = useMemo(
     () => jobs.find((item) => item.id === selectedJobId) || null,

@@ -23,6 +23,14 @@ const RECRUITER_EMAIL = String(
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const APPLICATION_STATUSES = [
+    "submitted",
+    "under_review",
+    "shortlisted",
+    "interview_scheduled",
+    "rejected",
+    "hired"
+];
 
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) {
@@ -237,6 +245,10 @@ function withSchemaHint(errorMessage) {
     return errorMessage;
 }
 
+function isValidApplicationStatus(status) {
+    return APPLICATION_STATUSES.includes(status);
+}
+
 app.get("/", (req, res) => {
     res.send("Resume ranking backend is running");
 });
@@ -380,6 +392,8 @@ app.post("/candidate/submit", authenticateUser, requireRole(["candidate"]), uplo
             file_name: resumeFile.originalname,
             file_storage_path: resumeFile.path,
             score: result.score,
+            application_status: "submitted",
+            status_updated_at: new Date().toISOString(),
             matched_skills: result.matchedSkills,
             missing_skills: result.missingSkills
         };
@@ -387,12 +401,29 @@ app.post("/candidate/submit", authenticateUser, requireRole(["candidate"]), uplo
         const { data: submission, error: insertError } = await db
             .from("candidate_submissions")
             .insert(insertPayload)
-            .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+            .select("id,job_id,candidate_email,file_name,score,application_status,recruiter_note,status_updated_at,matched_skills,missing_skills,created_at")
             .single();
 
         if (insertError) {
             return res.status(500).json({
                 error: `Unable to save submission: ${withSchemaHint(insertError.message)}`
+            });
+        }
+
+        const { error: historyInsertError } = await db
+            .from("candidate_submission_history")
+            .insert({
+                submission_id: submission.id,
+                candidate_user_id: req.user.id,
+                candidate_email: req.user.email,
+                application_status: "submitted",
+                changed_by_email: req.user.email,
+                note: "Resume submitted"
+            });
+
+        if (historyInsertError) {
+            return res.status(500).json({
+                error: `Unable to save submission timeline: ${withSchemaHint(historyInsertError.message)}`
             });
         }
 
@@ -426,7 +457,7 @@ app.get("/candidate/submissions", authenticateUser, requireRole(["candidate"]), 
 
     const { data, error } = await db
         .from("candidate_submissions")
-        .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+        .select("id,job_id,candidate_email,file_name,score,application_status,recruiter_note,status_updated_at,matched_skills,missing_skills,created_at")
         .eq("candidate_user_id", req.user.id)
         .order("created_at", { ascending: false });
 
@@ -450,7 +481,7 @@ app.get("/recruiter/candidates", authenticateUser, requireRole(["recruiter"]), a
 
     let query = db
         .from("candidate_submissions")
-        .select("id,job_id,candidate_email,file_name,score,matched_skills,missing_skills,created_at")
+        .select("id,job_id,candidate_email,file_name,score,application_status,recruiter_note,status_updated_at,matched_skills,missing_skills,created_at")
         .order("score", { ascending: false });
 
     if (jobId) {
@@ -466,6 +497,133 @@ app.get("/recruiter/candidates", authenticateUser, requireRole(["recruiter"]), a
     }
 
     return res.json({ candidates: data || [] });
+});
+
+app.get("/recruiter/shortlist", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+    const jobId = String(req.query.jobId || "").trim();
+
+    let query = db
+        .from("candidate_submissions")
+        .select("id,job_id,candidate_email,file_name,score,application_status,recruiter_note,status_updated_at,matched_skills,missing_skills,created_at")
+        .eq("application_status", "shortlisted")
+        .order("score", { ascending: false });
+
+    if (jobId) {
+        query = query.eq("job_id", jobId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to load shortlist: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.json({ shortlist: data || [] });
+});
+
+app.post("/recruiter/submissions/:id/status", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+    const submissionId = String(req.params.id || "").trim();
+    const status = String(req.body.status || "").trim().toLowerCase();
+    const note = String(req.body.note || "").trim();
+
+    if (!submissionId) {
+        return res.status(400).json({
+            error: "Submission id is required"
+        });
+    }
+
+    if (!isValidApplicationStatus(status)) {
+        return res.status(400).json({
+            error: `Invalid status. Allowed: ${APPLICATION_STATUSES.join(", ")}`
+        });
+    }
+
+    const { data: existingSubmission, error: existingSubmissionError } = await db
+        .from("candidate_submissions")
+        .select("id,candidate_user_id,candidate_email")
+        .eq("id", submissionId)
+        .single();
+
+    if (existingSubmissionError || !existingSubmission) {
+        return res.status(404).json({
+            error: "Submission not found"
+        });
+    }
+
+    const updatePayload = {
+        application_status: status,
+        recruiter_note: note || null,
+        status_updated_at: new Date().toISOString()
+    };
+
+    const { data: updatedSubmission, error: updateError } = await db
+        .from("candidate_submissions")
+        .update(updatePayload)
+        .eq("id", submissionId)
+        .select("id,job_id,candidate_email,file_name,score,application_status,recruiter_note,status_updated_at,matched_skills,missing_skills,created_at")
+        .single();
+
+    if (updateError || !updatedSubmission) {
+        return res.status(500).json({
+            error: `Unable to update submission status: ${withSchemaHint(updateError?.message)}`
+        });
+    }
+
+    const { error: historyInsertError } = await db
+        .from("candidate_submission_history")
+        .insert({
+            submission_id: submissionId,
+            candidate_user_id: existingSubmission.candidate_user_id,
+            candidate_email: existingSubmission.candidate_email,
+            application_status: status,
+            changed_by_email: req.user.email,
+            note: note || `Status changed to ${status}`
+        });
+
+    if (historyInsertError) {
+        return res.status(500).json({
+            error: `Unable to update submission timeline: ${withSchemaHint(historyInsertError.message)}`
+        });
+    }
+
+    return res.json({
+        message: "Submission status updated",
+        submission: updatedSubmission
+    });
+});
+
+app.get("/candidate/timeline", authenticateUser, requireRole(["candidate"]), async (req, res) => {
+    if (!ensureSupabaseDataReady(res)) {
+        return;
+    }
+
+    const db = getRequestSupabase(req);
+
+    const { data, error } = await db
+        .from("candidate_submission_history")
+        .select("id,submission_id,application_status,changed_by_email,note,created_at")
+        .eq("candidate_user_id", req.user.id)
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        return res.status(500).json({
+            error: `Unable to load timeline: ${withSchemaHint(error.message)}`
+        });
+    }
+
+    return res.json({ timeline: data || [] });
 });
 
 app.get("/recruiter/submissions/:id/download", authenticateUser, requireRole(["recruiter"]), async (req, res) => {
