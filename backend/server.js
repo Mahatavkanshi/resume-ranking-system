@@ -5,6 +5,7 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const { PDFParse } = require("pdf-parse");
+const { supabase, isSupabaseConfigured } = require("./supabaseClient");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -185,10 +186,40 @@ app.post("/upload-multiple", upload.array("resumes", MAX_FILES), async (req, res
         // 🔥 SORT (IMPORTANT)
         results.sort((a, b) => b.score - a.score);
 
+        let supabaseInsertStatus = {
+            enabled: isSupabaseConfigured,
+            savedCount: 0,
+            error: null
+        };
+
+        if (isSupabaseConfigured) {
+            const rowsToInsert = results.map((item) => ({
+                file_name: item.name,
+                job_description: jobDescription,
+                score: item.score,
+                matched_skills: item.matchedSkills.join(", "),
+                missing_skills: item.missingSkills.join(", ")
+            }));
+
+            const { error } = await supabase
+                .from("resumes")
+                .insert(rowsToInsert);
+
+            if (error) {
+                console.error("Supabase insert failed:", error);
+                supabaseInsertStatus.error = error.message;
+            } else {
+                supabaseInsertStatus.savedCount = rowsToInsert.length;
+            }
+        }
+
         res.json({
             message: "Ranking completed ✅",
             ranking: results,
             failedFiles,
+            storage: {
+                supabase: supabaseInsertStatus
+            },
             meta: {
                 filesProcessed: results.length,
                 filesFailed: failedFiles.length,
