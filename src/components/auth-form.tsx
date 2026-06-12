@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -16,8 +16,12 @@ export function AuthForm({ mode }: AuthFormProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(formData: FormData) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
     const supabase = createClient();
+    const formData = new FormData(event.currentTarget);
+
     setLoading(true);
     setError("");
 
@@ -67,7 +71,7 @@ export function AuthForm({ mode }: AuthFormProps) {
   }
 
   return (
-    <form action={handleSubmit} className="grid gap-5">
+    <form onSubmit={handleSubmit} className="grid gap-5">
       {mode === "signup" ? (
         <>
           <label className="grid gap-2 text-sm font-medium text-slate-700">
@@ -138,6 +142,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       ) : null}
 
       <button
+        type="submit"
         disabled={loading}
         className="h-11 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
