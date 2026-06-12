@@ -4,7 +4,6 @@ import {
   Contact,
   FileText,
   LayoutDashboard,
-  Mail,
   Send,
   Users,
 } from "lucide-react";
@@ -18,7 +17,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Application, JobPost, Profile, ResumeParseStatus } from "@/lib/types";
 
 type RecruiterApplication = Application & {
-  profiles: Pick<Profile, "full_name" | "email" | "organization"> | null;
+  profiles: Pick<Profile, "full_name" | "organization"> | null;
   job_posts: Pick<JobPost, "title" | "required_skills"> | null;
 };
 
@@ -93,7 +92,14 @@ export default async function RecruiterDashboardPage() {
   const profile = await getEffectiveProfile(supabase, user);
 
   if (profile.role !== "recruiter") {
-    return <WrongRolePanel currentRole={profile.role} expectedRole="recruiter" />;
+    return (
+      <WrongRolePanel
+        currentRole={profile.role}
+        expectedRole="recruiter"
+        email={profile.email ?? user.email}
+        userId={user.id}
+      />
+    );
   }
 
   const { data: jobs } = await supabase
@@ -107,7 +113,7 @@ export default async function RecruiterDashboardPage() {
   const { data: applications } = jobIds.length
     ? await supabase
         .from("applications")
-        .select("id, student_id, job_id, resume_id, resume_url, resume_file_name, resume_file_type, parse_status, extracted_skills, match_score, status, recruiter_response, created_at, profiles(full_name, email, organization), job_posts(title, required_skills)")
+        .select("id, student_id, job_id, resume_id, resume_url, resume_file_name, resume_file_type, parse_status, extracted_skills, match_score, status, recruiter_response, created_at, profiles(full_name, organization), job_posts(title, required_skills)")
         .in("job_id", jobIds)
         .order("match_score", { ascending: false })
         .returns<RecruiterApplication[]>()
@@ -258,20 +264,10 @@ export default async function RecruiterDashboardPage() {
                         <FileText size={16} />
                         View resume
                       </a>
-                      {application.profiles?.email ? (
-                        <a
-                          href={`mailto:${application.profiles.email}`}
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-700 transition hover:border-teal-400"
-                        >
-                          <Mail size={16} />
-                          Contact candidate
-                        </a>
-                      ) : (
-                        <span className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-500">
-                          <Contact size={16} />
-                          Email not available
-                        </span>
-                      )}
+                      <span className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-500">
+                        <Contact size={16} />
+                        Contact after shortlist
+                      </span>
                     </div>
                   </div>
 
@@ -322,7 +318,7 @@ export default async function RecruiterDashboardPage() {
                     <div>
                       <h3 className="font-semibold">{job.title}</h3>
                       <p className="mt-1 text-sm capitalize text-slate-500">
-                        {job.experience_level} · {job.status}
+                        {job.experience_level} - {job.status}
                       </p>
                     </div>
                     <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">

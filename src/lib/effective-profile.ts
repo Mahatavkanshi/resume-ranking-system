@@ -10,6 +10,10 @@ function isUserRole(value: string | undefined): value is UserRole {
   return value === "student" || value === "recruiter";
 }
 
+function getMetadataRole(value: unknown): UserRole | null {
+  return value === "student" || value === "recruiter" ? value : null;
+}
+
 export async function setSelectedRole(role: UserRole) {
   const cookieStore = await cookies();
 
@@ -29,21 +33,29 @@ export async function clearSelectedRole() {
 export async function getEffectiveProfile(
   supabase: Awaited<ReturnType<typeof createClient>>,
   user: User,
+  options: { sync?: boolean } = {},
 ): Promise<Profile> {
   const profile = await ensureProfile(supabase, user);
   const cookieStore = await cookies();
   const selectedRole = cookieStore.get(ROLE_COOKIE)?.value;
+  const cookieRole = isUserRole(selectedRole) ? selectedRole : null;
+  const metadataRole = getMetadataRole(user.user_metadata?.role);
+  const effectiveRole = cookieRole ?? metadataRole ?? profile.role;
 
-  if (!isUserRole(selectedRole)) {
-    return profile;
+  if (options.sync) {
+    cookieStore.set(ROLE_COOKIE, effectiveRole, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
   }
 
-  if (profile.role !== selectedRole) {
-    await supabase.from("profiles").update({ role: selectedRole }).eq("id", user.id);
+  if (options.sync && profile.role !== effectiveRole) {
+    await supabase.from("profiles").update({ role: effectiveRole }).eq("id", user.id);
   }
 
   return {
     ...profile,
-    role: selectedRole,
+    role: effectiveRole,
   };
 }

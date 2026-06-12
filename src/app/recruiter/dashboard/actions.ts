@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { parseSkillList } from "@/lib/skills";
+import { getEffectiveProfile } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
 import type { ApplicationStatus } from "@/lib/types";
 
@@ -30,13 +31,9 @@ async function requireRecruiter() {
     redirect("/auth/login");
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+  const profile = await getEffectiveProfile(supabase, user, { sync: true });
 
-  if (profile?.role !== "recruiter") {
+  if (profile.role !== "recruiter") {
     redirect("/student/dashboard");
   }
 

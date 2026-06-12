@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { setSelectedRole } from "@/lib/effective-profile";
+import { ensureProfile } from "@/lib/profiles";
 import { createClient } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
 
@@ -28,6 +29,7 @@ export async function updateCurrentUserRole(formData: FormData) {
     redirect("/auth/login");
   }
 
+  await ensureProfile(supabase, user);
   await supabase.auth.updateUser({
     data: {
       role: parsed.data.role,
@@ -39,9 +41,9 @@ export async function updateCurrentUserRole(formData: FormData) {
     .from("profiles")
     .update({ role: parsed.data.role })
     .eq("id", user.id)
-    .select("id, full_name, email, role, organization")
-    .single<Profile>();
-  let updatedProfile = directProfile;
+    .select("id, full_name, role, organization")
+    .single<Omit<Profile, "email">>();
+  let updatedProfile: Profile | null = directProfile ? { ...directProfile, email: null } : null;
 
   if (updateError || updatedProfile?.role !== parsed.data.role) {
     const { data: rpcProfile, error: rpcError } = await supabase

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 
 type LoginPageProps = {
@@ -9,6 +10,10 @@ type LoginPageProps = {
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
+
+  if (params.error?.includes("profiles.email")) {
+    redirect("/auth/login");
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f3ec] px-6 py-10">

@@ -122,7 +122,24 @@ export async function signUpAction(formData: FormData) {
     if (!error && response.data.user && response.data.session) {
       try {
         const profile = await ensureProfile(supabase, response.data.user);
-        signedUpRole = profile.role;
+        let savedRole = profile.role;
+
+        if (profile.role !== role) {
+          const { data: updatedProfile, error: updateError } = await supabase
+            .from("profiles")
+            .update({ role })
+            .eq("id", response.data.user.id)
+            .select("role")
+            .single<{ role: UserRole }>();
+
+          if (updateError) {
+            error = updateError;
+          } else {
+            savedRole = updatedProfile.role;
+          }
+        }
+
+        signedUpRole = savedRole;
         await setSelectedRole(signedUpRole);
       } catch (profileError) {
         error = profileError;
@@ -154,9 +171,14 @@ export async function loginAction(formData: FormData) {
   const supabase = await createClient();
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  const role = String(formData.get("role") ?? "student") as UserRole;
 
   if (!email || !password) {
     errorRedirect("/auth/login", "Please enter your email and password.");
+  }
+
+  if (role !== "student" && role !== "recruiter") {
+    errorRedirect("/auth/login", "Please choose a valid account type.");
   }
 
   let error: unknown;
@@ -184,12 +206,34 @@ export async function loginAction(formData: FormData) {
 
   if (user) {
     try {
-      const profile = await ensureProfile(supabase, user);
-      await setSelectedRole(profile.role);
+      await supabase.auth.updateUser({
+        data: { role },
+      });
+
+      const profile = await ensureProfile(supabase, {
+        ...user,
+        user_metadata: {
+          ...(user.user_metadata ?? {}),
+          role,
+        },
+      });
+
+      if (profile.role !== role) {
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({ role })
+          .eq("id", user.id);
+
+        if (updateError) {
+          errorRedirect("/auth/login", getErrorMessage(updateError));
+        }
+      }
+
+      await setSelectedRole(role);
     } catch (profileError) {
       errorRedirect("/auth/login", getErrorMessage(profileError));
     }
   }
 
-  redirect("/dashboard");
+  redirect(role === "recruiter" ? "/recruiter/dashboard" : "/student/dashboard");
 }

@@ -3,8 +3,12 @@
 import { useState } from "react";
 import type { UserRole } from "@/lib/types";
 
-export function RolePicker() {
-  const [role, setRole] = useState<UserRole>("student");
+type RolePickerProps = {
+  defaultRole?: UserRole;
+};
+
+export function RolePicker({ defaultRole = "student" }: RolePickerProps) {
+  const [role, setRole] = useState<UserRole>(defaultRole);
 
   return (
     <fieldset className="grid gap-3">

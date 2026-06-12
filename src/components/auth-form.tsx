@@ -34,6 +34,8 @@ export function AuthForm({ mode, error, notice }: AuthFormProps) {
         </>
       ) : null}
 
+      {mode === "login" ? <RolePicker defaultRole="recruiter" /> : null}
+
       <label className="grid gap-2 text-sm font-medium text-slate-700">
         Email
         <input

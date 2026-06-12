@@ -5,28 +5,28 @@ function getRole(value: unknown): UserRole {
   return value === "recruiter" ? "recruiter" : "student";
 }
 
+function isExplicitRole(value: unknown): value is UserRole {
+  return value === "student" || value === "recruiter";
+}
+
 export async function ensureProfile(supabase: SupabaseClient, user: User) {
   const metadata = user.user_metadata ?? {};
   const metadataRole = getRole(metadata.role);
   const { data: existingProfile, error: selectError } = await supabase
     .from("profiles")
-    .select("id, full_name, email, role, organization")
+    .select("id, full_name, role, organization")
     .eq("id", user.id)
-    .maybeSingle<Profile>();
+    .maybeSingle<Omit<Profile, "email">>();
 
   if (selectError) {
     throw selectError;
   }
 
   if (existingProfile) {
-    const updates: Partial<Pick<Profile, "email" | "role">> = {};
+    const updates: Partial<Pick<Profile, "role">> = {};
 
-    if (metadata.role && existingProfile.role !== metadataRole) {
+    if (isExplicitRole(metadata.role) && existingProfile.role !== metadataRole) {
       updates.role = metadataRole;
-    }
-
-    if (!existingProfile.email && user.email) {
-      updates.email = user.email;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -34,11 +34,15 @@ export async function ensureProfile(supabase: SupabaseClient, user: User) {
 
       return {
         ...existingProfile,
+        email: null,
         ...updates,
       };
     }
 
-    return existingProfile;
+    return {
+      ...existingProfile,
+      email: null,
+    };
   }
 
   const fallbackName = user.email?.split("@")[0] ?? "New user";
@@ -46,7 +50,6 @@ export async function ensureProfile(supabase: SupabaseClient, user: User) {
   const profile = {
     id: user.id,
     full_name: String(metadata.full_name ?? fallbackName),
-    email: user.email ?? null,
     role: metadataRole,
     organization: metadata.organization ? String(metadata.organization) : null,
   };
@@ -54,12 +57,15 @@ export async function ensureProfile(supabase: SupabaseClient, user: User) {
   const { data: createdProfile, error: insertError } = await supabase
     .from("profiles")
     .insert(profile)
-    .select("id, full_name, email, role, organization")
-    .single<Profile>();
+    .select("id, full_name, role, organization")
+    .single<Omit<Profile, "email">>();
 
   if (insertError) {
     throw insertError;
   }
 
-  return createdProfile;
+  return {
+    ...createdProfile,
+    email: null,
+  };
 }

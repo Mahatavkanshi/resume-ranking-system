@@ -103,7 +103,14 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
   const profile = await getEffectiveProfile(supabase, user);
 
   if (profile.role !== "student") {
-    return <WrongRolePanel currentRole={profile.role} expectedRole="student" />;
+    return (
+      <WrongRolePanel
+        currentRole={profile.role}
+        expectedRole="student"
+        email={profile.email ?? user.email}
+        userId={user.id}
+      />
+    );
   }
 
   const [{ data: jobs }, { data: applications }, { data: resume }] = await Promise.all([

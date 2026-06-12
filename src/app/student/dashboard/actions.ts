@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { calculateMatchScore, extractSkillsFromText, extractTextFromResume } from "@/lib/skills";
+import { getEffectiveProfile } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
-import type { JobPost, Profile, StudentResume } from "@/lib/types";
+import type { JobPost, StudentResume } from "@/lib/types";
 
 const MAX_RESUME_SIZE = 10 * 1024 * 1024;
 const ALLOWED_RESUME_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt", ".rtf", ".png", ".jpg", ".jpeg"];
@@ -40,13 +41,9 @@ async function requireStudent() {
     redirect("/auth/login");
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, role, organization")
-    .eq("id", user.id)
-    .single<Profile>();
+  const profile = await getEffectiveProfile(supabase, user, { sync: true });
 
-  if (profile?.role !== "student") {
+  if (profile.role !== "student") {
     redirect("/recruiter/dashboard");
   }
 
