@@ -47,7 +47,7 @@ async function withAuthTimeout<T>(request: Promise<T>) {
     timeout = setTimeout(() => {
       reject(
         new Error(
-          "Supabase auth request timed out. Check your internet connection, Supabase project status, and Auth settings.",
+          "Supabase signup is not completing. Run the auth/schema repair SQL in Supabase, then check Authentication > Providers > Email settings.",
         ),
       );
     }, AUTH_TIMEOUT_MS);

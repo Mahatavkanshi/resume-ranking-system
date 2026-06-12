@@ -67,6 +67,16 @@ If the SQL Editor shows an error, copy the exact red error text and fix that lin
 first. Common rerun errors like existing types or policies are already handled in
 the current schema.
 
+If signup stays on the same page or shows a Supabase timeout, run these SQL files
+in this order:
+
+1. `supabase/repair-existing-schema.sql`
+2. `supabase/fix-auth-signup.sql`
+3. `supabase/upgrade-student-dashboard.sql`
+
+Then check Supabase `Authentication -> Providers -> Email`. For beginner testing,
+turn email confirmation off so new users receive a session immediately.
+
 ## Main Routes
 
 - `/auth/signup`

@@ -186,7 +186,7 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
 
       {activeTab === "overview" ? (
         <div className="grid gap-6">
-          <section className="grid gap-4 md:grid-cols-4">
+          <section className="grid gap-4 md:grid-cols-5">
             <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500">Profile completion</p>
               <p className="mt-2 text-3xl font-semibold">{profileCompletion}%</p>
@@ -200,12 +200,44 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
               <p className="mt-2 text-3xl font-semibold">{(applications ?? []).length}</p>
             </article>
             <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Shortlisted</p>
+              <p className="mt-2 text-3xl font-semibold">{shortlistedCount}</p>
+            </article>
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500">Best match</p>
               <p className="mt-2 text-3xl font-semibold">{bestScore}%</p>
             </article>
           </section>
 
-          <section className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+          <section className="grid gap-6 lg:grid-cols-[0.85fr_0.85fr_1.3fr]">
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-xl font-semibold">Profile completion</h2>
+              <div className="mt-4 h-2 rounded-full bg-slate-200">
+                <div
+                  className="h-2 rounded-full bg-teal-700"
+                  style={{ width: `${profileCompletion}%` }}
+                />
+              </div>
+              <dl className="mt-5 grid gap-4 text-sm">
+                <div>
+                  <dt className="font-semibold text-slate-700">Name</dt>
+                  <dd className="mt-1 text-slate-600">{profile.full_name}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-slate-700">College</dt>
+                  <dd className="mt-1 text-slate-600">
+                    {profile.organization ?? "Not added yet"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-slate-700">Resume skills</dt>
+                  <dd className="mt-2">
+                    <SkillChips skills={resume?.extracted_skills ?? []} />
+                  </dd>
+                </div>
+              </dl>
+            </article>
+
             <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h2 className="text-xl font-semibold">My Resume</h2>
