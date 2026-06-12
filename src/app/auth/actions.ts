@@ -107,6 +107,17 @@ export async function signUpAction(formData: FormData) {
     );
 
     error = response.error;
+
+    if (!error && response.data.user) {
+      const { error: profileError } = await supabase.from("profiles").upsert({
+        id: response.data.user.id,
+        full_name: fullName,
+        role,
+        organization: organization || null,
+      });
+
+      error = profileError;
+    }
   } catch (caughtError) {
     error = caughtError;
   }

@@ -37,6 +37,8 @@ Never commit `.env.local`. This project already ignores `.env*` in `.gitignore`.
 
 The schema is written to be safe to run more than once. It creates the profile,
 job post, application, and resume storage setup, then enables Row Level Security.
+It also removes the old auth signup trigger so the app can create profile rows
+directly after signup.
 
 4. For beginner testing, you can temporarily disable email confirmation:
 
