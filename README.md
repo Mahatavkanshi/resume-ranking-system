@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Resume Ranking System
 
-## Getting Started
+A final-year project built with Next.js and Supabase. Recruiters can post tech
+requirements, students can apply with resumes, and applications are ranked by a
+simple skill-based matching score.
 
-First, run the development server:
+## Tech Stack
+
+- Next.js App Router with TypeScript
+- Tailwind CSS
+- Supabase Auth, Database, Storage, and Row Level Security
+- Skill-based resume matching
+
+## Local Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create `.env.local` from `.env.example`:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Never commit `.env.local`. This project already ignores `.env*` in `.gitignore`.
+
+3. Run the Supabase schema:
+
+- Open Supabase Dashboard.
+- Go to SQL Editor.
+- Paste the full contents of `supabase/schema.sql`.
+- Run the query.
+
+The schema is written to be safe to run more than once. It creates the profile,
+job post, application, and resume storage setup, then enables Row Level Security.
+
+4. For beginner testing, you can temporarily disable email confirmation:
+
+- Supabase Dashboard
+- Authentication
+- Providers
+- Email
+- Turn off confirm email
+
+5. Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Important Supabase Notes
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Use the public project URL for `NEXT_PUBLIC_SUPABASE_URL`.
+- Use only the anon public key for `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Do not put `sb_secret_...` values in frontend environment variables.
+- If a secret key was shared accidentally, rotate it in Supabase.
 
-## Learn More
+If the SQL Editor shows an error, copy the exact red error text and fix that line
+first. Common rerun errors like existing types or policies are already handled in
+the current schema.
 
-To learn more about Next.js, take a look at the following resources:
+## Main Routes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `/auth/signup`
+- `/auth/login`
+- `/dashboard`
+- `/student/dashboard`
+- `/recruiter/dashboard`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Checks
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm run build
+```

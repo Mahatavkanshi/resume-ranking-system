@@ -1,34 +1,11 @@
 create extension if not exists "pgcrypto";
 
-do $$
-begin
-  create type public.user_role as enum ('student', 'recruiter');
-exception
-  when duplicate_object then null;
-end $$;
+create type public.user_role as enum ('student', 'recruiter');
+create type public.application_status as enum ('pending', 'shortlisted', 'rejected', 'accepted');
+create type public.experience_level as enum ('internship', 'entry', 'mid', 'senior');
+create type public.job_status as enum ('open', 'closed');
 
-do $$
-begin
-  create type public.application_status as enum ('pending', 'shortlisted', 'rejected', 'accepted');
-exception
-  when duplicate_object then null;
-end $$;
-
-do $$
-begin
-  create type public.experience_level as enum ('internship', 'entry', 'mid', 'senior');
-exception
-  when duplicate_object then null;
-end $$;
-
-do $$
-begin
-  create type public.job_status as enum ('open', 'closed');
-exception
-  when duplicate_object then null;
-end $$;
-
-create table if not exists public.profiles (
+create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
   role public.user_role not null,
@@ -36,7 +13,7 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.job_posts (
+create table public.job_posts (
   id uuid primary key default gen_random_uuid(),
   recruiter_id uuid not null references public.profiles(id) on delete cascade,
   title text not null,
@@ -47,7 +24,7 @@ create table if not exists public.job_posts (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.applications (
+create table public.applications (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references public.profiles(id) on delete cascade,
   job_id uuid not null references public.job_posts(id) on delete cascade,
@@ -60,8 +37,8 @@ create table if not exists public.applications (
   unique (student_id, job_id)
 );
 
-create index if not exists applications_job_score_idx on public.applications(job_id, match_score desc);
-create index if not exists job_posts_recruiter_idx on public.job_posts(recruiter_id, created_at desc);
+create index applications_job_score_idx on public.applications(job_id, match_score desc);
+create index job_posts_recruiter_idx on public.job_posts(recruiter_id, created_at desc);
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -91,13 +68,11 @@ alter table public.profiles enable row level security;
 alter table public.job_posts enable row level security;
 alter table public.applications enable row level security;
 
-drop policy if exists "Users can read their profile" on public.profiles;
 create policy "Users can read their profile"
 on public.profiles for select
 to authenticated
 using (id = auth.uid());
 
-drop policy if exists "Recruiters can read applicant profiles" on public.profiles;
 create policy "Recruiters can read applicant profiles"
 on public.profiles for select
 to authenticated
@@ -111,20 +86,17 @@ using (
   )
 );
 
-drop policy if exists "Users can update their profile" on public.profiles;
 create policy "Users can update their profile"
 on public.profiles for update
 to authenticated
 using (id = auth.uid())
 with check (id = auth.uid());
 
-drop policy if exists "Students can read open jobs" on public.job_posts;
 create policy "Students can read open jobs"
 on public.job_posts for select
 to authenticated
 using (status = 'open');
 
-drop policy if exists "Recruiters can manage their jobs" on public.job_posts;
 create policy "Recruiters can manage their jobs"
 on public.job_posts for all
 to authenticated
@@ -137,7 +109,6 @@ with check (
   )
 );
 
-drop policy if exists "Students can create their applications" on public.applications;
 create policy "Students can create their applications"
 on public.applications for insert
 to authenticated
@@ -153,13 +124,11 @@ with check (
   )
 );
 
-drop policy if exists "Students can read their applications" on public.applications;
 create policy "Students can read their applications"
 on public.applications for select
 to authenticated
 using (student_id = auth.uid());
 
-drop policy if exists "Recruiters can read applications for their jobs" on public.applications;
 create policy "Recruiters can read applications for their jobs"
 on public.applications for select
 to authenticated
@@ -171,7 +140,6 @@ using (
   )
 );
 
-drop policy if exists "Recruiters can update applications for their jobs" on public.applications;
 create policy "Recruiters can update applications for their jobs"
 on public.applications for update
 to authenticated
@@ -194,7 +162,6 @@ insert into storage.buckets (id, name, public)
 values ('resumes', 'resumes', true)
 on conflict (id) do update set public = true;
 
-drop policy if exists "Students can upload their resume files" on storage.objects;
 create policy "Students can upload their resume files"
 on storage.objects for insert
 to authenticated
@@ -203,7 +170,6 @@ with check (
   and split_part(name, '/', 1) = auth.uid()::text
 );
 
-drop policy if exists "Authenticated users can read resume files" on storage.objects;
 create policy "Authenticated users can read resume files"
 on storage.objects for select
 to authenticated
