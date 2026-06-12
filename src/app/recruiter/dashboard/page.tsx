@@ -47,7 +47,7 @@ export default async function RecruiterDashboardPage() {
   const { data: applications } = jobIds.length
     ? await supabase
         .from("applications")
-        .select("id, student_id, job_id, resume_url, extracted_skills, match_score, status, recruiter_response, created_at, profiles(full_name, organization), job_posts(title, required_skills)")
+        .select("id, student_id, job_id, resume_id, resume_url, resume_file_name, resume_file_type, parse_status, extracted_skills, match_score, status, recruiter_response, created_at, profiles(full_name, organization), job_posts(title, required_skills)")
         .in("job_id", jobIds)
         .order("match_score", { ascending: false })
         .returns<RecruiterApplication[]>()
@@ -164,8 +164,11 @@ export default async function RecruiterDashboardPage() {
                     rel="noreferrer"
                     className="inline-flex h-10 items-center rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-500"
                   >
-                    View resume
+                    {application.resume_file_name ?? "View resume"}
                   </a>
+                  <span className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold capitalize text-slate-700">
+                    {application.parse_status.replace("_", " ")}
+                  </span>
                 </div>
 
                 <form action={updateApplicationStatus} className="mt-4 grid gap-3">

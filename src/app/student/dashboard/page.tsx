@@ -1,17 +1,94 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { FileUp, Search } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  CircleCheck,
+  FileText,
+  LayoutDashboard,
+  Search,
+  Upload,
+  XCircle,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ScoreMeter } from "@/components/score-meter";
 import { StatusBadge } from "@/components/status-badge";
-import { applyToJob } from "@/app/student/dashboard/actions";
+import {
+  applyToJob,
+  cancelApplication,
+  uploadStudentResume,
+} from "@/app/student/dashboard/actions";
 import { createClient } from "@/lib/supabase/server";
-import type { Application, JobPost, Profile } from "@/lib/types";
+import type { Application, JobPost, Profile, ResumeParseStatus, StudentResume } from "@/lib/types";
 
 type StudentApplication = Application & {
   job_posts: Pick<JobPost, "title" | "required_skills"> | null;
 };
 
-export default async function StudentDashboardPage() {
+type StudentDashboardProps = {
+  searchParams: Promise<{
+    tab?: string;
+    q?: string;
+  }>;
+};
+
+const tabs = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "posts", label: "View Recruiter Posts", icon: Search },
+  { id: "applications", label: "My Applications", icon: BriefcaseBusiness },
+  { id: "resume", label: "My Resume", icon: FileText },
+];
+
+const parseLabels: Record<ResumeParseStatus, string> = {
+  parsed: "Parsed",
+  partial: "Partial",
+  not_parsed: "Not parsed",
+};
+
+const parseStyles: Record<ResumeParseStatus, string> = {
+  parsed: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  partial: "border-amber-200 bg-amber-50 text-amber-800",
+  not_parsed: "border-slate-200 bg-slate-50 text-slate-700",
+};
+
+function ParseBadge({ status }: { status: ResumeParseStatus }) {
+  return (
+    <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${parseStyles[status]}`}>
+      {parseLabels[status]}
+    </span>
+  );
+}
+
+function SkillChips({ skills }: { skills: string[] }) {
+  if (skills.length === 0) {
+    return <span className="text-sm text-slate-500">No known skills detected.</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {skills.map((skill) => (
+        <span
+          key={skill}
+          className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+        >
+          {skill}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="rounded-lg border border-slate-200 bg-white p-5 text-slate-600 shadow-sm">
+      {children}
+    </p>
+  );
+}
+
+export default async function StudentDashboardPage({ searchParams }: StudentDashboardProps) {
+  const params = await searchParams;
+  const activeTab = tabs.some((tab) => tab.id === params.tab) ? params.tab! : "overview";
+  const query = (params.q ?? "").trim().toLowerCase();
   const supabase = await createClient();
   const {
     data: { user },
@@ -35,7 +112,7 @@ export default async function StudentDashboardPage() {
     redirect("/recruiter/dashboard");
   }
 
-  const [{ data: jobs }, { data: applications }] = await Promise.all([
+  const [{ data: jobs }, { data: applications }, { data: resume }] = await Promise.all([
     supabase
       .from("job_posts")
       .select("id, recruiter_id, title, description, required_skills, experience_level, status, created_at")
@@ -44,38 +121,171 @@ export default async function StudentDashboardPage() {
       .returns<JobPost[]>(),
     supabase
       .from("applications")
-      .select("id, student_id, job_id, resume_url, extracted_skills, match_score, status, recruiter_response, created_at, job_posts(title, required_skills)")
+      .select("id, student_id, job_id, resume_id, resume_url, resume_file_name, resume_file_type, parse_status, extracted_skills, match_score, status, recruiter_response, created_at, job_posts(title, required_skills)")
       .eq("student_id", user.id)
       .order("created_at", { ascending: false })
       .returns<StudentApplication[]>(),
+    supabase
+      .from("student_resumes")
+      .select("id, student_id, file_name, file_type, file_url, storage_path, parse_status, extracted_skills, created_at, updated_at")
+      .eq("student_id", user.id)
+      .maybeSingle<StudentResume>(),
   ]);
 
   const appliedJobIds = new Set((applications ?? []).map((application) => application.job_id));
+  const filteredJobs = (jobs ?? []).filter((job) => {
+    if (!query) {
+      return true;
+    }
+
+    return (
+      job.title.toLowerCase().includes(query) ||
+      job.description.toLowerCase().includes(query) ||
+      job.required_skills.some((skill) => skill.toLowerCase().includes(query))
+    );
+  });
+  const shortlistedCount = (applications ?? []).filter(
+    (application) => application.status === "shortlisted" || application.status === "accepted",
+  ).length;
+  const bestScore = Math.max(0, ...(applications ?? []).map((application) => application.match_score));
+  const profileFields = [profile.full_name, profile.organization, resume?.file_url];
+  const profileCompletion = Math.round(
+    (profileFields.filter(Boolean).length / profileFields.length) * 100,
+  );
 
   return (
     <AppShell profile={profile}>
       <div className="mb-8">
         <h1 className="text-3xl font-semibold">Student dashboard</h1>
         <p className="mt-2 text-slate-600">
-          Browse open tech roles, upload your resume, and follow recruiter responses.
+          Manage your resume, explore recruiter posts, apply to jobs, and track responses.
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      <nav className="mb-6 flex flex-wrap gap-2">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+
+          return (
+            <Link
+              key={tab.id}
+              href={`/student/dashboard?tab=${tab.id}`}
+              className={`inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition ${
+                isActive
+                  ? "border-slate-950 bg-slate-950 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+              }`}
+            >
+              <Icon size={16} />
+              {tab.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {activeTab === "overview" ? (
+        <div className="grid gap-6">
+          <section className="grid gap-4 md:grid-cols-4">
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Profile completion</p>
+              <p className="mt-2 text-3xl font-semibold">{profileCompletion}%</p>
+            </article>
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Open posts</p>
+              <p className="mt-2 text-3xl font-semibold">{(jobs ?? []).length}</p>
+            </article>
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Applications</p>
+              <p className="mt-2 text-3xl font-semibold">{(applications ?? []).length}</p>
+            </article>
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Best match</p>
+              <p className="mt-2 text-3xl font-semibold">{bestScore}%</p>
+            </article>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-xl font-semibold">My Resume</h2>
+                {resume ? <ParseBadge status={resume.parse_status} /> : null}
+              </div>
+              {resume ? (
+                <div className="grid gap-4">
+                  <p className="font-medium">{resume.file_name}</p>
+                  <SkillChips skills={resume.extracted_skills} />
+                  <Link
+                    href="/student/dashboard?tab=resume"
+                    className="inline-flex h-10 w-fit items-center rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:border-slate-500"
+                  >
+                    Manage resume
+                  </Link>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  <p className="leading-7 text-slate-600">
+                    Upload your resume once, then use it to apply to recruiter posts.
+                  </p>
+                  <Link
+                    href="/student/dashboard?tab=resume"
+                    className="inline-flex h-10 w-fit items-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white"
+                  >
+                    Upload resume
+                  </Link>
+                </div>
+              )}
+            </article>
+
+            <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-xl font-semibold">Application status tracker</h2>
+              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                {(["pending", "shortlisted", "accepted", "rejected"] as const).map((status) => (
+                  <div key={status} className="rounded-md border border-slate-200 p-3">
+                    <StatusBadge status={status} />
+                    <p className="mt-3 text-2xl font-semibold">
+                      {(applications ?? []).filter((application) => application.status === status).length}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-sm text-slate-600">
+                Shortlisted or accepted applications: {shortlistedCount}
+              </p>
+            </article>
+          </section>
+        </div>
+      ) : null}
+
+      {activeTab === "posts" ? (
         <section>
-          <div className="mb-4 flex items-center gap-2">
-            <Search className="text-teal-700" size={20} />
-            <h2 className="text-xl font-semibold">Open recruiter posts</h2>
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">View Recruiter Posts</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Open jobs appear here automatically after recruiters post them.
+              </p>
+            </div>
+            <form className="flex gap-2" action="/student/dashboard">
+              <input type="hidden" name="tab" value="posts" />
+              <input
+                name="q"
+                defaultValue={params.q ?? ""}
+                className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-teal-700"
+                placeholder="Search skill or title"
+              />
+              <button className="h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white">
+                Search
+              </button>
+            </form>
           </div>
+
           <div className="grid gap-4">
-            {(jobs ?? []).map((job) => {
+            {filteredJobs.map((job) => {
               const alreadyApplied = appliedJobIds.has(job.id);
 
               return (
-                <article
-                  key={job.id}
-                  className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
-                >
+                <article key={job.id} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h3 className="text-lg font-semibold">{job.title}</h3>
@@ -85,60 +295,47 @@ export default async function StudentDashboardPage() {
                       {job.experience_level}
                     </span>
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {job.required_skills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
-                      >
-                        {skill}
-                      </span>
-                    ))}
+                  <div className="mt-4">
+                    <SkillChips skills={job.required_skills} />
                   </div>
-                  <form action={applyToJob} className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <form action={applyToJob} className="mt-5 flex flex-wrap items-center gap-3">
                     <input type="hidden" name="jobId" value={job.id} />
-                    <input
-                      required
-                      disabled={alreadyApplied}
-                      type="file"
-                      name="resume"
-                      accept=".pdf,.txt"
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    />
                     <button
-                      disabled={alreadyApplied}
+                      disabled={alreadyApplied || !resume}
                       className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <FileUp size={17} />
-                      {alreadyApplied ? "Applied" : "Apply"}
+                      <CircleCheck size={17} />
+                      {alreadyApplied ? "Applied" : "Apply with my resume"}
                     </button>
+                    {!resume ? (
+                      <Link href="/student/dashboard?tab=resume" className="text-sm font-semibold text-teal-700">
+                        Upload resume first
+                      </Link>
+                    ) : null}
                   </form>
                 </article>
               );
             })}
-            {(jobs ?? []).length === 0 ? (
-              <p className="rounded-lg border border-slate-200 bg-white p-5 text-slate-600">
-                No open recruiter posts yet.
-              </p>
+            {filteredJobs.length === 0 ? (
+              <EmptyState>No matching recruiter posts yet.</EmptyState>
             ) : null}
           </div>
         </section>
+      ) : null}
 
+      {activeTab === "applications" ? (
         <section>
-          <h2 className="mb-4 text-xl font-semibold">My applications</h2>
+          <h2 className="mb-4 text-xl font-semibold">My Applications</h2>
           <div className="grid gap-4">
             {(applications ?? []).map((application) => (
-              <article
-                key={application.id}
-                className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3">
+              <article key={application.id} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h3 className="font-semibold">
+                    <h3 className="text-lg font-semibold">
                       {application.job_posts?.title ?? "Job post"}
                     </h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      {new Date(application.created_at).toLocaleDateString()}
+                      Applied on {new Date(application.created_at).toLocaleDateString()}
                     </p>
                   </div>
                   <StatusBadge status={application.status} />
@@ -146,35 +343,107 @@ export default async function StudentDashboardPage() {
                 <div className="mt-4">
                   <ScoreMeter score={application.match_score} />
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {application.extracted_skills.length > 0 ? (
-                    application.extracted_skills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
-                      >
-                        {skill}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-sm text-slate-500">No known skills detected.</span>
-                  )}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <ParseBadge status={application.parse_status} />
+                  <a
+                    href={application.resume_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-semibold text-teal-700"
+                  >
+                    {application.resume_file_name ?? "View resume"}
+                  </a>
+                </div>
+                <div className="mt-4">
+                  <SkillChips skills={application.extracted_skills} />
                 </div>
                 {application.recruiter_response ? (
                   <p className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-700">
                     {application.recruiter_response}
                   </p>
                 ) : null}
+                {application.status === "pending" ? (
+                  <form action={cancelApplication} className="mt-4">
+                    <input type="hidden" name="applicationId" value={application.id} />
+                    <button className="inline-flex h-10 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 transition hover:border-red-300">
+                      <XCircle size={16} />
+                      Cancel application
+                    </button>
+                  </form>
+                ) : null}
               </article>
             ))}
             {(applications ?? []).length === 0 ? (
-              <p className="rounded-lg border border-slate-200 bg-white p-5 text-slate-600">
-                Your applications will appear here after you apply.
-              </p>
+              <EmptyState>Your applications will appear here after you apply.</EmptyState>
             ) : null}
           </div>
         </section>
-      </div>
+      ) : null}
+
+      {activeTab === "resume" ? (
+        <section className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+          <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 flex items-center gap-2">
+              <Upload className="text-teal-700" size={20} />
+              <h2 className="text-xl font-semibold">{resume ? "Replace resume" : "Upload resume"}</h2>
+            </div>
+            <form action={uploadStudentResume} className="grid gap-4">
+              <input
+                required
+                type="file"
+                name="resume"
+                accept=".pdf,.doc,.docx,.txt,.rtf,.png,.jpg,.jpeg"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
+              />
+              <p className="text-sm leading-6 text-slate-600">
+                Supported files: PDF, DOC, DOCX, TXT, RTF, PNG, JPG, JPEG. Images and scanned
+                resumes are stored, but skills are not auto-detected yet.
+              </p>
+              <button className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800">
+                <Upload size={17} />
+                {resume ? "Replace resume" : "Upload resume"}
+              </button>
+            </form>
+          </article>
+
+          <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold">Current resume</h2>
+            {resume ? (
+              <div className="mt-4 grid gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-semibold">{resume.file_name}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Updated {new Date(resume.updated_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <ParseBadge status={resume.parse_status} />
+                </div>
+                <a
+                  href={resume.file_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 w-fit items-center rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:border-slate-500"
+                >
+                  View stored resume
+                </a>
+                <div>
+                  <h3 className="mb-3 font-semibold">Detected skills</h3>
+                  <SkillChips skills={resume.extracted_skills} />
+                </div>
+                {resume.parse_status === "not_parsed" ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+                    This resume is stored successfully, but skills could not be auto-detected.
+                    You can still apply to jobs.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <EmptyState>No resume uploaded yet.</EmptyState>
+            )}
+          </article>
+        </section>
+      ) : null}
     </AppShell>
   );
 }

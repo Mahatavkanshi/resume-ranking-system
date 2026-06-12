@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { ensureProfile } from "@/lib/profiles";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/types";
 
@@ -9,6 +10,10 @@ const AUTH_TIMEOUT_MS = 15000;
 
 function errorRedirect(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+function noticeRedirect(path: string, message: string): never {
+  redirect(`${path}?notice=${encodeURIComponent(message)}`);
 }
 
 function getErrorMessage(error: unknown) {
@@ -108,15 +113,12 @@ export async function signUpAction(formData: FormData) {
 
     error = response.error;
 
-    if (!error && response.data.user) {
-      const { error: profileError } = await supabase.from("profiles").upsert({
-        id: response.data.user.id,
-        full_name: fullName,
-        role,
-        organization: organization || null,
-      });
-
-      error = profileError;
+    if (!error && response.data.user && response.data.session) {
+      try {
+        await ensureProfile(supabase, response.data.user);
+      } catch (profileError) {
+        error = profileError;
+      }
     }
   } catch (caughtError) {
     error = caughtError;
@@ -124,6 +126,17 @@ export async function signUpAction(formData: FormData) {
 
   if (error) {
     errorRedirect("/auth/signup", getErrorMessage(error));
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    noticeRedirect(
+      "/auth/login",
+      "Account created. Confirm your email if Supabase asks for it, then sign in.",
+    );
   }
 
   redirect(role === "student" ? "/student/dashboard" : "/recruiter/dashboard");
@@ -155,6 +168,18 @@ export async function loginAction(formData: FormData) {
 
   if (error) {
     errorRedirect("/auth/login", getErrorMessage(error));
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    try {
+      await ensureProfile(supabase, user);
+    } catch (profileError) {
+      errorRedirect("/auth/login", getErrorMessage(profileError));
+    }
   }
 
   redirect("/dashboard");

@@ -3,6 +3,7 @@ import { AuthForm } from "@/components/auth-form";
 type LoginPageProps = {
   searchParams: Promise<{
     error?: string;
+    notice?: string;
   }>;
 };
 
@@ -17,7 +18,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           Continue to your student or recruiter dashboard.
         </p>
         <div className="mt-6">
-          <AuthForm mode="login" error={params.error} />
+          <AuthForm mode="login" error={params.error} notice={params.notice} />
         </div>
       </section>
     </main>

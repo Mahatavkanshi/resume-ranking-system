@@ -4,9 +4,10 @@ import { loginAction, signUpAction } from "@/app/auth/actions";
 type AuthFormProps = {
   mode: "login" | "signup";
   error?: string;
+  notice?: string;
 };
 
-export function AuthForm({ mode, error }: AuthFormProps) {
+export function AuthForm({ mode, error, notice }: AuthFormProps) {
   return (
     <form action={mode === "signup" ? signUpAction : loginAction} className="grid gap-5">
       {mode === "signup" ? (
@@ -75,6 +76,12 @@ export function AuthForm({ mode, error }: AuthFormProps) {
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </p>
+      ) : null}
+
+      {notice ? (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {notice}
         </p>
       ) : null}
 

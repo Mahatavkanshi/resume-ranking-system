@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
+import { ensureProfile } from "@/lib/profiles";
 import { createClient } from "@/lib/supabase/server";
-import type { Profile } from "@/lib/types";
 
 export default async function DashboardRedirectPage() {
   const supabase = await createClient();
@@ -12,11 +12,7 @@ export default async function DashboardRedirectPage() {
     redirect("/auth/login");
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single<Pick<Profile, "role">>();
+  const profile = await ensureProfile(supabase, user);
 
   if (profile?.role === "recruiter") {
     redirect("/recruiter/dashboard");

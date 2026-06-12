@@ -35,6 +35,8 @@ export const KNOWN_SKILLS = [
   "algorithms",
 ];
 
+const SUPPORTED_PARSE_EXTENSIONS = [".txt", ".rtf", ".pdf", ".docx"];
+
 export function parseSkillList(value: string) {
   return Array.from(
     new Set(
@@ -65,17 +67,74 @@ export function calculateMatchScore(requiredSkills: string[], resumeSkills: stri
   return Math.round((matchedCount / requiredSkills.length) * 100);
 }
 
+function getExtension(fileName: string) {
+  const lowerName = fileName.toLowerCase();
+  const dotIndex = lowerName.lastIndexOf(".");
+
+  return dotIndex >= 0 ? lowerName.slice(dotIndex) : "";
+}
+
+function stripRtf(text: string) {
+  return text
+    .replace(/\\'[0-9a-fA-F]{2}/g, " ")
+    .replace(/[{}]/g, " ")
+    .replace(/\\[a-zA-Z]+-?\d* ?/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+export function isParseSupported(fileName: string) {
+  return SUPPORTED_PARSE_EXTENSIONS.includes(getExtension(fileName));
+}
+
 export async function extractTextFromResume(file: File) {
-  if (file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt")) {
-    return file.text();
+  const extension = getExtension(file.name);
+
+  if (file.type === "text/plain" || extension === ".txt") {
+    const text = await file.text();
+
+    return { text, parseStatus: "parsed" as const };
   }
 
-  const buffer = await file.arrayBuffer();
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  const raw = decoder.decode(buffer);
+  if (extension === ".rtf") {
+    const text = stripRtf(await file.text());
 
-  return raw
-    .replace(/[^\x20-\x7E]+/g, " ")
-    .replace(/\s+/g, " ")
-    .slice(0, 20000);
+    return {
+      text,
+      parseStatus: text.trim() ? ("partial" as const) : ("not_parsed" as const),
+    };
+  }
+
+  if (extension === ".docx") {
+    try {
+      const mammoth = await import("mammoth");
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const result = await mammoth.extractRawText({ buffer });
+
+      return {
+        text: result.value,
+        parseStatus: result.value.trim() ? ("parsed" as const) : ("not_parsed" as const),
+      };
+    } catch {
+      return { text: "", parseStatus: "not_parsed" as const };
+    }
+  }
+
+  if (extension === ".pdf") {
+    try {
+      const { PDFParse } = await import("pdf-parse");
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
+      await parser.destroy();
+
+      return {
+        text: result.text,
+        parseStatus: result.text.trim() ? ("parsed" as const) : ("not_parsed" as const),
+      };
+    } catch {
+      return { text: "", parseStatus: "not_parsed" as const };
+    }
+  }
+
+  return { text: "", parseStatus: "not_parsed" as const };
 }
