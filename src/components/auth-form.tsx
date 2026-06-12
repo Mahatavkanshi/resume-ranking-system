@@ -1,77 +1,14 @@
-"use client";
-
-import { type FormEvent, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import type { UserRole } from "@/lib/types";
+import { loginAction, signUpAction } from "@/app/auth/actions";
 
 type AuthFormProps = {
   mode: "login" | "signup";
+  error?: string;
 };
 
-export function AuthForm({ mode }: AuthFormProps) {
-  const router = useRouter();
-  const [role, setRole] = useState<UserRole>("student");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const supabase = createClient();
-    const formData = new FormData(event.currentTarget);
-
-    setLoading(true);
-    setError("");
-
-    const email = String(formData.get("email") ?? "");
-    const password = String(formData.get("password") ?? "");
-    const fullName = String(formData.get("fullName") ?? "");
-    const organization = String(formData.get("organization") ?? "");
-
-    if (mode === "signup") {
-      const { error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            role,
-            organization,
-          },
-          emailRedirectTo: `${location.origin}/auth/callback`,
-        },
-      });
-
-      if (signUpError) {
-        setError(signUpError.message);
-        setLoading(false);
-        return;
-      }
-
-      router.push(role === "student" ? "/student/dashboard" : "/recruiter/dashboard");
-      router.refresh();
-      return;
-    }
-
-    const { error: loginError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (loginError) {
-      setError(loginError.message);
-      setLoading(false);
-      return;
-    }
-
-    router.push("/dashboard");
-    router.refresh();
-  }
-
+export function AuthForm({ mode, error }: AuthFormProps) {
   return (
-    <form onSubmit={handleSubmit} className="grid gap-5">
+    <form action={mode === "signup" ? signUpAction : loginAction} className="grid gap-5">
       {mode === "signup" ? (
         <>
           <label className="grid gap-2 text-sm font-medium text-slate-700">
@@ -94,20 +31,20 @@ export function AuthForm({ mode }: AuthFormProps) {
           <fieldset className="grid gap-3">
             <legend className="text-sm font-medium text-slate-700">Account type</legend>
             <div className="grid grid-cols-2 gap-3">
-              {(["student", "recruiter"] as UserRole[]).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setRole(item)}
-                  className={`h-11 rounded-md border text-sm font-semibold capitalize transition ${
-                    role === item
-                      ? "border-teal-700 bg-teal-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700"
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
+              <label className="has-[:checked]:border-teal-700 has-[:checked]:bg-teal-700 has-[:checked]:text-white flex h-11 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition">
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name="role"
+                  value="student"
+                  defaultChecked
+                />
+                Student
+              </label>
+              <label className="has-[:checked]:border-teal-700 has-[:checked]:bg-teal-700 has-[:checked]:text-white flex h-11 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition">
+                <input className="sr-only" type="radio" name="role" value="recruiter" />
+                Recruiter
+              </label>
             </div>
           </fieldset>
         </>
@@ -143,10 +80,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       <button
         type="submit"
-        disabled={loading}
-        className="h-11 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+        className="h-11 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
       >
-        {loading ? "Please wait..." : mode === "signup" ? "Create account" : "Sign in"}
+        {mode === "signup" ? "Create account" : "Sign in"}
       </button>
 
       <p className="text-center text-sm text-slate-600">
