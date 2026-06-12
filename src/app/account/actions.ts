@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { setSelectedRole } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
 
@@ -32,12 +33,13 @@ export async function updateCurrentUserRole(formData: FormData) {
       role: parsed.data.role,
     },
   });
+  await setSelectedRole(parsed.data.role);
 
   const { data: directProfile, error: updateError } = await supabase
     .from("profiles")
     .update({ role: parsed.data.role })
     .eq("id", user.id)
-    .select("id, full_name, role, organization")
+    .select("id, full_name, email, role, organization")
     .single<Profile>();
   let updatedProfile = directProfile;
 
@@ -46,17 +48,13 @@ export async function updateCurrentUserRole(formData: FormData) {
       .rpc("switch_my_role", { next_role: parsed.data.role })
       .single<Profile>();
 
-    if (rpcError) {
-      throw new Error(
-        `${updateError?.message ?? "Role update did not save."} RPC fallback failed: ${rpcError.message}`,
-      );
+    if (!rpcError) {
+      updatedProfile = rpcProfile;
     }
-
-    updatedProfile = rpcProfile;
   }
 
-  if (updatedProfile.role !== parsed.data.role) {
-    throw new Error("Role did not update in Supabase. Run the profile repair SQL and try again.");
+  if (updatedProfile?.role !== parsed.data.role) {
+    redirect(parsed.data.role === "recruiter" ? "/recruiter/dashboard" : "/student/dashboard");
   }
 
   redirect(updatedProfile.role === "recruiter" ? "/recruiter/dashboard" : "/student/dashboard");

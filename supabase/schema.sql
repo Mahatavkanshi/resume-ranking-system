@@ -38,6 +38,7 @@ end $$;
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
+  email text,
   role public.user_role not null,
   organization text,
   created_at timestamptz not null default now()
@@ -45,6 +46,9 @@ create table if not exists public.profiles (
 
 alter table public.profiles
   add column if not exists full_name text;
+
+alter table public.profiles
+  add column if not exists email text;
 
 alter table public.profiles
   add column if not exists role public.user_role;

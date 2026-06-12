@@ -9,6 +9,7 @@ export type ResumeParseStatus = "parsed" | "partial" | "not_parsed";
 export type Profile = {
   id: string;
   full_name: string;
+  email: string | null;
   role: UserRole;
   organization: string | null;
 };

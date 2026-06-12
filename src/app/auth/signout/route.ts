@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { clearSelectedRole } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
 
 function getRedirectUrl(request: Request) {
@@ -15,6 +16,7 @@ function getRedirectUrl(request: Request) {
 export async function GET(request: Request) {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  await clearSelectedRole();
 
   return NextResponse.redirect(getRedirectUrl(request));
 }
@@ -22,6 +24,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  await clearSelectedRole();
 
   return NextResponse.redirect(getRedirectUrl(request));
 }

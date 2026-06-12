@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { LogOut } from "lucide-react";
-import { updateCurrentUserRole } from "@/app/account/actions";
 import type { Profile } from "@/lib/types";
 
 type AppShellProps = {
@@ -9,8 +8,6 @@ type AppShellProps = {
 };
 
 export function AppShell({ profile, children }: AppShellProps) {
-  const nextRole = profile.role === "student" ? "recruiter" : "student";
-
   return (
     <main className="min-h-screen bg-[#f6f3ec] text-slate-950">
       <header className="border-b border-slate-200 bg-white">
@@ -22,12 +19,6 @@ export function AppShell({ profile, children }: AppShellProps) {
             <span className="hidden text-sm text-slate-600 sm:inline">
               {profile.full_name} - {profile.role}
             </span>
-            <form action={updateCurrentUserRole}>
-              <input type="hidden" name="role" value={nextRole} />
-              <button className="inline-flex h-10 items-center rounded-md border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-800 transition hover:border-teal-300">
-                Switch to {nextRole}
-              </button>
-            </form>
             <form action="/auth/signout" method="post">
               <button
                 className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-500"

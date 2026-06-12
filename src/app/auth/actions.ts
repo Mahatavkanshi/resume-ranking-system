@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { setSelectedRole } from "@/lib/effective-profile";
 import { ensureProfile } from "@/lib/profiles";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/types";
@@ -94,6 +95,7 @@ export async function signUpAction(formData: FormData) {
   }
 
   await supabase.auth.signOut();
+  await setSelectedRole(role);
 
   let error: unknown;
   let signedUpRole: UserRole = role;
@@ -106,6 +108,7 @@ export async function signUpAction(formData: FormData) {
         options: {
           data: {
             full_name: fullName,
+            email,
             role,
             organization,
           },
@@ -120,6 +123,7 @@ export async function signUpAction(formData: FormData) {
       try {
         const profile = await ensureProfile(supabase, response.data.user);
         signedUpRole = profile.role;
+        await setSelectedRole(signedUpRole);
       } catch (profileError) {
         error = profileError;
       }
@@ -180,7 +184,8 @@ export async function loginAction(formData: FormData) {
 
   if (user) {
     try {
-      await ensureProfile(supabase, user);
+      const profile = await ensureProfile(supabase, user);
+      await setSelectedRole(profile.role);
     } catch (profileError) {
       errorRedirect("/auth/login", getErrorMessage(profileError));
     }

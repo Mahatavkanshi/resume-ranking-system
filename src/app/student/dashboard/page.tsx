@@ -18,8 +18,9 @@ import {
   cancelApplication,
   uploadStudentResume,
 } from "@/app/student/dashboard/actions";
+import { getEffectiveProfile } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
-import type { Application, JobPost, Profile, ResumeParseStatus, StudentResume } from "@/lib/types";
+import type { Application, JobPost, ResumeParseStatus, StudentResume } from "@/lib/types";
 
 type StudentApplication = Application & {
   job_posts: Pick<JobPost, "title" | "required_skills"> | null;
@@ -99,15 +100,7 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
     redirect("/auth/login");
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, full_name, role, organization")
-    .eq("id", user.id)
-    .single<Profile>();
-
-  if (!profile) {
-    redirect("/auth/login");
-  }
+  const profile = await getEffectiveProfile(supabase, user);
 
   if (profile.role !== "student") {
     return <WrongRolePanel currentRole={profile.role} expectedRole="student" />;

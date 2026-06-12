@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { updateCurrentUserRole } from "@/app/account/actions";
 import type { UserRole } from "@/lib/types";
 
 type WrongRolePanelProps = {
@@ -17,12 +16,12 @@ export function WrongRolePanel({ currentRole, expectedRole }: WrongRolePanelProp
           <strong>{expectedRole}</strong> accounts.
         </p>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          <form action={updateCurrentUserRole}>
-            <input type="hidden" name="role" value={expectedRole} />
-            <button className="inline-flex h-11 w-full items-center justify-center rounded-md bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800 sm:w-auto">
-              Make this account {expectedRole}
-            </button>
-          </form>
+          <Link
+            href={`/account/switch-role?role=${expectedRole}`}
+            className="inline-flex h-11 items-center justify-center rounded-md bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800"
+          >
+            Make this account {expectedRole}
+          </Link>
           <Link
             href={`/auth/signout?next=/auth/signup?fresh=1`}
             className="inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
