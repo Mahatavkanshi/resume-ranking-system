@@ -33,12 +33,13 @@ export async function updateCurrentUserRole(formData: FormData) {
     },
   });
 
-  let { data: updatedProfile, error: updateError } = await supabase
+  const { data: directProfile, error: updateError } = await supabase
     .from("profiles")
     .update({ role: parsed.data.role })
     .eq("id", user.id)
     .select("id, full_name, role, organization")
     .single<Profile>();
+  let updatedProfile = directProfile;
 
   if (updateError || updatedProfile?.role !== parsed.data.role) {
     const { data: rpcProfile, error: rpcError } = await supabase

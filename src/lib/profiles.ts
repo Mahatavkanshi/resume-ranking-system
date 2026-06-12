@@ -6,6 +6,8 @@ function getRole(value: unknown): UserRole {
 }
 
 export async function ensureProfile(supabase: SupabaseClient, user: User) {
+  const metadata = user.user_metadata ?? {};
+  const metadataRole = getRole(metadata.role);
   const { data: existingProfile, error: selectError } = await supabase
     .from("profiles")
     .select("id, full_name, role, organization")
@@ -17,16 +19,24 @@ export async function ensureProfile(supabase: SupabaseClient, user: User) {
   }
 
   if (existingProfile) {
+    if (metadata.role && existingProfile.role !== metadataRole) {
+      await supabase.from("profiles").update({ role: metadataRole }).eq("id", user.id);
+
+      return {
+        ...existingProfile,
+        role: metadataRole,
+      };
+    }
+
     return existingProfile;
   }
 
-  const metadata = user.user_metadata ?? {};
   const fallbackName = user.email?.split("@")[0] ?? "New user";
 
   const profile = {
     id: user.id,
     full_name: String(metadata.full_name ?? fallbackName),
-    role: getRole(metadata.role),
+    role: metadataRole,
     organization: metadata.organization ? String(metadata.organization) : null,
   };
 
