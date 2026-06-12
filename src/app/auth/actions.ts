@@ -93,7 +93,10 @@ export async function signUpAction(formData: FormData) {
     errorRedirect("/auth/signup", "Please choose a valid account type.");
   }
 
+  await supabase.auth.signOut();
+
   let error: unknown;
+  let signedUpRole: UserRole = role;
 
   try {
     const response = await withAuthTimeout(
@@ -115,7 +118,8 @@ export async function signUpAction(formData: FormData) {
 
     if (!error && response.data.user && response.data.session) {
       try {
-        await ensureProfile(supabase, response.data.user);
+        const profile = await ensureProfile(supabase, response.data.user);
+        signedUpRole = profile.role;
       } catch (profileError) {
         error = profileError;
       }
@@ -139,7 +143,7 @@ export async function signUpAction(formData: FormData) {
     );
   }
 
-  redirect(role === "student" ? "/student/dashboard" : "/recruiter/dashboard");
+  redirect(signedUpRole === "student" ? "/student/dashboard" : "/recruiter/dashboard");
 }
 
 export async function loginAction(formData: FormData) {

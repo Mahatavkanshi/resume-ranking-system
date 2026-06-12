@@ -1,13 +1,25 @@
+import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
+import { createClient } from "@/lib/supabase/server";
 
 type SignupPageProps = {
   searchParams: Promise<{
     error?: string;
+    fresh?: string;
   }>;
 };
 
 export default async function SignupPage({ searchParams }: SignupPageProps) {
   const params = await searchParams;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user && params.fresh !== "1") {
+    await supabase.auth.signOut();
+    redirect("/auth/signup?fresh=1");
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f3ec] px-6 py-10">

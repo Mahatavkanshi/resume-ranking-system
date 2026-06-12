@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { loginAction, signUpAction } from "@/app/auth/actions";
+import { RolePicker } from "@/components/role-picker";
 
 type AuthFormProps = {
   mode: "login" | "signup";
@@ -29,25 +30,7 @@ export function AuthForm({ mode, error, notice }: AuthFormProps) {
               placeholder="ABC College"
             />
           </label>
-          <fieldset className="grid gap-3">
-            <legend className="text-sm font-medium text-slate-700">Account type</legend>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="has-[:checked]:border-teal-700 has-[:checked]:bg-teal-700 has-[:checked]:text-white flex h-11 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition">
-                <input
-                  className="sr-only"
-                  type="radio"
-                  name="role"
-                  value="student"
-                  defaultChecked
-                />
-                Student
-              </label>
-              <label className="has-[:checked]:border-teal-700 has-[:checked]:bg-teal-700 has-[:checked]:text-white flex h-11 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition">
-                <input className="sr-only" type="radio" name="role" value="recruiter" />
-                Recruiter
-              </label>
-            </div>
-          </fieldset>
+          <RolePicker />
         </>
       ) : null}
 
