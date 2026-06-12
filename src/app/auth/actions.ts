@@ -5,8 +5,56 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/types";
 
+const AUTH_TIMEOUT_MS = 15000;
+
 function errorRedirect(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const record = error as Record<string, unknown>;
+
+    if (typeof record.message === "string" && record.message) {
+      return record.message;
+    }
+
+    if (typeof record.error_description === "string" && record.error_description) {
+      return record.error_description;
+    }
+
+    if (typeof record.error === "string" && record.error) {
+      return record.error;
+    }
+  }
+
+  return "Authentication failed. Please check your Supabase setup and try again.";
+}
+
+async function withAuthTimeout<T>(request: Promise<T>) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new Error(
+          "Supabase auth request timed out. Check your internet connection, Supabase project status, and Auth settings.",
+        ),
+      );
+    }, AUTH_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([request, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 async function getOrigin() {
@@ -40,21 +88,31 @@ export async function signUpAction(formData: FormData) {
     errorRedirect("/auth/signup", "Please choose a valid account type.");
   }
 
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        full_name: fullName,
-        role,
-        organization,
-      },
-      emailRedirectTo: `${origin}/auth/callback`,
-    },
-  });
+  let error: unknown;
+
+  try {
+    const response = await withAuthTimeout(
+      supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            role,
+            organization,
+          },
+          emailRedirectTo: `${origin}/auth/callback`,
+        },
+      }),
+    );
+
+    error = response.error;
+  } catch (caughtError) {
+    error = caughtError;
+  }
 
   if (error) {
-    errorRedirect("/auth/signup", error.message);
+    errorRedirect("/auth/signup", getErrorMessage(error));
   }
 
   redirect(role === "student" ? "/student/dashboard" : "/recruiter/dashboard");
@@ -69,13 +127,23 @@ export async function loginAction(formData: FormData) {
     errorRedirect("/auth/login", "Please enter your email and password.");
   }
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  let error: unknown;
+
+  try {
+    const response = await withAuthTimeout(
+      supabase.auth.signInWithPassword({
+        email,
+        password,
+      }),
+    );
+
+    error = response.error;
+  } catch (caughtError) {
+    error = caughtError;
+  }
 
   if (error) {
-    errorRedirect("/auth/login", error.message);
+    errorRedirect("/auth/login", getErrorMessage(error));
   }
 
   redirect("/dashboard");
