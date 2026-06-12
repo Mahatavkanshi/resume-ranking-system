@@ -3,6 +3,7 @@ import { BriefcaseBusiness, Send } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ScoreMeter } from "@/components/score-meter";
 import { StatusBadge } from "@/components/status-badge";
+import { WrongRolePanel } from "@/components/wrong-role-panel";
 import { createJobPost, updateApplicationStatus } from "@/app/recruiter/dashboard/actions";
 import { createClient } from "@/lib/supabase/server";
 import type { Application, JobPost, Profile } from "@/lib/types";
@@ -33,7 +34,7 @@ export default async function RecruiterDashboardPage() {
   }
 
   if (profile.role !== "recruiter") {
-    redirect("/student/dashboard");
+    return <WrongRolePanel currentRole={profile.role} expectedRole="recruiter" />;
   }
 
   const { data: jobs } = await supabase

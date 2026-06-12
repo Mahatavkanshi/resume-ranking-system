@@ -17,8 +17,7 @@ export default async function SignupPage({ searchParams }: SignupPageProps) {
   } = await supabase.auth.getUser();
 
   if (user && params.fresh !== "1") {
-    await supabase.auth.signOut();
-    redirect("/auth/signup?fresh=1");
+    redirect("/auth/signout?next=/auth/signup?fresh=1");
   }
 
   return (

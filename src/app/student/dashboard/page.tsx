@@ -12,6 +12,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { ScoreMeter } from "@/components/score-meter";
 import { StatusBadge } from "@/components/status-badge";
+import { WrongRolePanel } from "@/components/wrong-role-panel";
 import {
   applyToJob,
   cancelApplication,
@@ -109,7 +110,7 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
   }
 
   if (profile.role !== "student") {
-    redirect("/recruiter/dashboard");
+    return <WrongRolePanel currentRole={profile.role} expectedRole="student" />;
   }
 
   const [{ data: jobs }, { data: applications }, { data: resume }] = await Promise.all([
