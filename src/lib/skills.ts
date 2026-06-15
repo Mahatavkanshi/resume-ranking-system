@@ -54,6 +54,14 @@ export function extractSkillsFromText(text: string) {
   return KNOWN_SKILLS.filter((skill) => normalizedText.includes(skill));
 }
 
+export function getResumeParseStatus(text: string, extractedSkills: string[]) {
+  if (!text.trim()) {
+    return "not_parsed" as const;
+  }
+
+  return extractedSkills.length > 0 ? ("parsed" as const) : ("partial" as const);
+}
+
 export function calculateMatchScore(requiredSkills: string[], resumeSkills: string[]) {
   if (requiredSkills.length === 0) {
     return 0;
@@ -80,6 +88,30 @@ function stripRtf(text: string) {
     .replace(/[{}]/g, " ")
     .replace(/\\[a-zA-Z]+-?\d* ?/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function cleanExtractedText(text: string) {
+  return text
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\\n|\\r|\\t/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractFallbackPdfText(buffer: Buffer) {
+  const raw = buffer.toString("latin1");
+  const literalStrings = Array.from(raw.matchAll(/\(([^()]{2,})\)/g), (match) => match[1]);
+  const hexStrings = Array.from(raw.matchAll(/<([0-9a-fA-F\s]{8,})>/g), (match) => {
+    const hex = match[1].replace(/\s+/g, "");
+    const bytes = hex.match(/.{1,2}/g) ?? [];
+
+    return bytes
+      .map((byte) => String.fromCharCode(Number.parseInt(byte, 16)))
+      .join("");
+  });
+
+  return cleanExtractedText([...literalStrings, ...hexStrings].join(" "));
 }
 
 export function isParseSupported(fileName: string) {
@@ -120,19 +152,35 @@ export async function extractTextFromResume(file: File) {
   }
 
   if (extension === ".pdf") {
+    const buffer = Buffer.from(await file.arrayBuffer());
+
     try {
       const { PDFParse } = await import("pdf-parse");
-      const buffer = Buffer.from(await file.arrayBuffer());
       const parser = new PDFParse({ data: buffer });
       const result = await parser.getText();
       await parser.destroy();
+      const text = cleanExtractedText(result.text);
+
+      if (!text) {
+        const fallbackText = extractFallbackPdfText(buffer);
+
+        return {
+          text: fallbackText,
+          parseStatus: fallbackText ? ("partial" as const) : ("not_parsed" as const),
+        };
+      }
 
       return {
-        text: result.text,
-        parseStatus: result.text.trim() ? ("parsed" as const) : ("not_parsed" as const),
+        text,
+        parseStatus: "parsed" as const,
       };
     } catch {
-      return { text: "", parseStatus: "not_parsed" as const };
+      const fallbackText = extractFallbackPdfText(buffer);
+
+      return {
+        text: fallbackText,
+        parseStatus: fallbackText ? ("partial" as const) : ("not_parsed" as const),
+      };
     }
   }
 

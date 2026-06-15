@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { calculateMatchScore, extractSkillsFromText, extractTextFromResume } from "@/lib/skills";
+import {
+  calculateMatchScore,
+  extractSkillsFromText,
+  extractTextFromResume,
+  getResumeParseStatus,
+} from "@/lib/skills";
 import { getEffectiveProfile } from "@/lib/effective-profile";
 import { createClient } from "@/lib/supabase/server";
 import type { JobPost, StudentResume } from "@/lib/types";
@@ -31,6 +36,12 @@ const cancelSchema = z.object({
   applicationId: z.string().uuid(),
 });
 
+type ResumeParsingResult = {
+  text: string;
+  parseStatus: "parsed" | "partial" | "not_parsed";
+  extractedSkills: string[];
+};
+
 async function requireStudent() {
   const supabase = await createClient();
   const {
@@ -54,6 +65,20 @@ function safeFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
+async function parseResumeFile(resume: File): Promise<ResumeParsingResult> {
+  const { text, parseStatus } = await extractTextFromResume(resume);
+  const extractedSkills = extractSkillsFromText(text);
+  const finalParseStatus = parseStatus === "not_parsed"
+    ? parseStatus
+    : getResumeParseStatus(text, extractedSkills);
+
+  return {
+    text,
+    parseStatus: finalParseStatus,
+    extractedSkills,
+  };
+}
+
 export async function uploadStudentResume(formData: FormData) {
   const parsed = uploadResumeSchema.safeParse({
     resume: formData.get("resume"),
@@ -65,8 +90,7 @@ export async function uploadStudentResume(formData: FormData) {
 
   const { supabase, user } = await requireStudent();
   const resume = parsed.data.resume;
-  const { text, parseStatus } = await extractTextFromResume(resume);
-  const extractedSkills = extractSkillsFromText(text);
+  const { parseStatus, extractedSkills } = await parseResumeFile(resume);
   const fileName = safeFileName(resume.name);
   const storagePath = `${user.id}/latest-${Date.now()}-${fileName}`;
 
@@ -99,6 +123,48 @@ export async function uploadStudentResume(formData: FormData) {
 
   if (upsertError) {
     throw new Error(upsertError.message);
+  }
+
+  revalidatePath("/student/dashboard");
+}
+
+export async function reparseStudentResume() {
+  const { supabase, user } = await requireStudent();
+
+  const { data: resume, error: resumeError } = await supabase
+    .from("student_resumes")
+    .select("id, file_name, file_type, file_url")
+    .eq("student_id", user.id)
+    .single<Pick<StudentResume, "id" | "file_name" | "file_type" | "file_url">>();
+
+  if (resumeError || !resume) {
+    throw new Error("Upload your resume first, then try parsing it.");
+  }
+
+  const response = await fetch(resume.file_url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("Could not download the stored resume from Supabase Storage.");
+  }
+
+  const blob = await response.blob();
+  const file = new File([blob], resume.file_name, {
+    type: resume.file_type ?? blob.type ?? "application/octet-stream",
+  });
+  const { parseStatus, extractedSkills } = await parseResumeFile(file);
+
+  const { error: updateError } = await supabase
+    .from("student_resumes")
+    .update({
+      parse_status: parseStatus,
+      extracted_skills: extractedSkills,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", resume.id)
+    .eq("student_id", user.id);
+
+  if (updateError) {
+    throw new Error(updateError.message);
   }
 
   revalidatePath("/student/dashboard");

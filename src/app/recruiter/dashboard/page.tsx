@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import {
   BriefcaseBusiness,
   Contact,
@@ -79,7 +80,19 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default async function RecruiterDashboardPage() {
+type RecruiterDashboardPageProps = {
+  searchParams: Promise<{
+    error?: string;
+    notice?: string;
+  }>;
+};
+
+export default async function RecruiterDashboardPage({ searchParams }: RecruiterDashboardPageProps) {
+  await connection();
+
+  const params = await searchParams;
+  const visibleError =
+    params.error === "Please fill all job fields correctly." ? undefined : params.error;
   const supabase = await createClient();
   const {
     data: { user },
@@ -102,7 +115,7 @@ export default async function RecruiterDashboardPage() {
     );
   }
 
-  const { data: jobs } = await supabase
+  const { data: jobs, error: jobsError } = await supabase
     .from("job_posts")
     .select("id, recruiter_id, title, description, required_skills, experience_level, status, created_at")
     .eq("recruiter_id", user.id)
@@ -140,6 +153,26 @@ export default async function RecruiterDashboardPage() {
         <p className="mt-2 text-slate-600">
           Create posts, receive student resumes, compare skill scores, and contact candidates.
         </p>
+        {visibleError ? (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p>{visibleError}</p>
+            {visibleError.toLowerCase().includes("supabase/run-this-first.sql") ? (
+              <p className="mt-2 font-semibold">
+                Open Supabase SQL Editor, paste the file from supabase/run-this-first.sql, and run it once.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {params.notice ? (
+          <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {params.notice}
+          </p>
+        ) : null}
+        {jobsError ? (
+          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            Your job posts could not load from Supabase: {jobsError.message}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[230px_1fr]">
@@ -332,7 +365,11 @@ export default async function RecruiterDashboardPage() {
                 </article>
               ))}
               {recruiterJobs.length === 0 ? (
-                <EmptyState>Your posts will appear here after you create your first requirement.</EmptyState>
+                <EmptyState>
+                  {jobsError
+                    ? "Your posts could not load because Supabase blocked the query."
+                    : "Your posts will appear here after you create your first requirement."}
+                </EmptyState>
               ) : null}
             </div>
           </section>
@@ -342,6 +379,10 @@ export default async function RecruiterDashboardPage() {
               <BriefcaseBusiness className="text-teal-700" size={20} />
               <h2 className="text-xl font-semibold">Create job post</h2>
             </div>
+            <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+              If posting fails with a Supabase setup or RLS message, run{" "}
+              <span className="font-mono">supabase/run-this-first.sql</span> once in Supabase SQL Editor.
+            </p>
             <form action={createJobPost} className="grid gap-4">
               <label className="grid gap-2 text-sm font-medium text-slate-700">
                 Role title

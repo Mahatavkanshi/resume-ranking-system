@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import {
   BriefcaseBusiness,
   CircleCheck,
@@ -16,6 +17,7 @@ import { WrongRolePanel } from "@/components/wrong-role-panel";
 import {
   applyToJob,
   cancelApplication,
+  reparseStudentResume,
   uploadStudentResume,
 } from "@/app/student/dashboard/actions";
 import { getEffectiveProfile } from "@/lib/effective-profile";
@@ -88,6 +90,8 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 }
 
 export default async function StudentDashboardPage({ searchParams }: StudentDashboardProps) {
+  await connection();
+
   const params = await searchParams;
   const activeTab = tabs.some((tab) => tab.id === params.tab) ? params.tab! : "overview";
   const query = (params.q ?? "").trim().toLowerCase();
@@ -113,7 +117,11 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
     );
   }
 
-  const [{ data: jobs }, { data: applications }, { data: resume }] = await Promise.all([
+  const [
+    { data: jobs, error: jobsError },
+    { data: applications },
+    { data: resume },
+  ] = await Promise.all([
     supabase
       .from("job_posts")
       .select("id, recruiter_id, title, description, required_skills, experience_level, status, created_at")
@@ -133,8 +141,31 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
       .maybeSingle<StudentResume>(),
   ]);
 
+  let openJobs = jobs ?? [];
+  let openJobsError = jobsError?.message;
+
+  if (openJobs.length === 0) {
+    const { data: rpcJobs, error: rpcJobsError } = await supabase
+      .rpc("list_open_job_posts")
+      .returns<JobPost[]>();
+
+    if (rpcJobsError) {
+      openJobsError =
+        jobsError?.message ??
+        `${rpcJobsError.message}. Run supabase/run-this-first.sql in Supabase SQL Editor to repair recruiter post visibility.`;
+    } else {
+      const rpcJobsResult = rpcJobs as unknown as JobPost[] | JobPost | null;
+      openJobs = Array.isArray(rpcJobsResult)
+        ? rpcJobsResult
+        : rpcJobsResult
+          ? [rpcJobsResult]
+          : [];
+      openJobsError = undefined;
+    }
+  }
+
   const appliedJobIds = new Set((applications ?? []).map((application) => application.job_id));
-  const filteredJobs = (jobs ?? []).filter((job) => {
+  const filteredJobs = openJobs.filter((job) => {
     if (!query) {
       return true;
     }
@@ -161,6 +192,11 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
         <p className="mt-2 text-slate-600">
           Manage your resume, explore recruiter posts, apply to jobs, and track responses.
         </p>
+        {openJobsError ? (
+          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            Recruiter posts could not load: {openJobsError}
+          </p>
+        ) : null}
       </div>
 
       <nav className="mb-6 flex flex-wrap gap-2">
@@ -194,7 +230,7 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
             </article>
             <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500">Open posts</p>
-              <p className="mt-2 text-3xl font-semibold">{(jobs ?? []).length}</p>
+              <p className="mt-2 text-3xl font-semibold">{openJobs.length}</p>
             </article>
             <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-sm text-slate-500">Applications</p>
@@ -350,7 +386,11 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
               );
             })}
             {filteredJobs.length === 0 ? (
-              <EmptyState>No matching recruiter posts yet.</EmptyState>
+              <EmptyState>
+                {openJobsError
+                  ? "Recruiter posts could not load because Supabase blocked the query."
+                  : "No matching recruiter posts yet."}
+              </EmptyState>
             ) : null}
           </div>
         </section>
@@ -460,14 +500,26 @@ export default async function StudentDashboardPage({ searchParams }: StudentDash
                 >
                   View stored resume
                 </a>
+                <form action={reparseStudentResume}>
+                  <button className="inline-flex h-10 w-fit items-center rounded-md bg-teal-700 px-3 text-sm font-semibold text-white hover:bg-teal-800">
+                    Re-parse resume
+                  </button>
+                </form>
                 <div>
                   <h3 className="mb-3 font-semibold">Detected skills</h3>
                   <SkillChips skills={resume.extracted_skills} />
                 </div>
+                {resume.parse_status === "partial" ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
+                    This resume text was read, but no skills from the current beginner skill list
+                    were found. Try adding skills like React, JavaScript, Python, SQL, Git, or Supabase.
+                  </p>
+                ) : null}
                 {resume.parse_status === "not_parsed" ? (
                   <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">
-                    This resume is stored successfully, but skills could not be auto-detected.
-                    You can still apply to jobs.
+                    This resume is stored successfully, but no readable text was found. Click
+                    Re-parse resume once after parser updates. If it still stays not parsed,
+                    the PDF is probably scanned/image-based and needs OCR.
                   </p>
                 ) : null}
               </div>

@@ -266,6 +266,106 @@ with check (
   )
 );
 
+create or replace function public.create_recruiter_job_post(
+  post_title text,
+  post_description text,
+  post_required_skills text[],
+  post_experience_level text
+)
+returns public.job_posts
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  created_post public.job_posts;
+  auth_email text;
+  auth_name text;
+begin
+  select email, raw_user_meta_data ->> 'full_name'
+  into auth_email, auth_name
+  from auth.users
+  where id = auth.uid();
+
+  if auth.uid() is null then
+    raise exception 'You must be signed in to create a job post';
+  end if;
+
+  insert into public.profiles (id, full_name, role, organization)
+  values (
+    auth.uid(),
+    coalesce(nullif(auth_name, ''), split_part(coalesce(auth_email, 'New user'), '@', 1), 'New user'),
+    'recruiter',
+    null
+  )
+  on conflict (id) do update
+  set role = 'recruiter'
+  where public.profiles.id = auth.uid();
+
+  insert into public.job_posts (
+    recruiter_id,
+    title,
+    description,
+    required_skills,
+    experience_level,
+    status
+  )
+  values (
+    auth.uid(),
+    post_title,
+    post_description,
+    coalesce(post_required_skills, '{}'),
+    case
+      when post_experience_level in ('internship', 'entry', 'mid', 'senior')
+        then post_experience_level::public.experience_level
+      else 'internship'::public.experience_level
+    end,
+    'open'
+  )
+  returning * into created_post;
+
+  return created_post;
+end;
+$$;
+
+grant execute on function public.create_recruiter_job_post(
+  text,
+  text,
+  text[],
+  text
+) to authenticated;
+
+create or replace function public.list_open_job_posts()
+returns table (
+  id uuid,
+  recruiter_id uuid,
+  title text,
+  description text,
+  required_skills text[],
+  experience_level public.experience_level,
+  status public.job_status,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    job_posts.id,
+    job_posts.recruiter_id,
+    job_posts.title,
+    job_posts.description,
+    job_posts.required_skills,
+    job_posts.experience_level,
+    job_posts.status,
+    job_posts.created_at
+  from public.job_posts
+  where job_posts.status = 'open'
+  order by job_posts.created_at desc;
+$$;
+
+grant execute on function public.list_open_job_posts() to authenticated;
+
 drop policy if exists "Students can create their applications" on public.applications;
 create policy "Students can create their applications"
 on public.applications for insert
